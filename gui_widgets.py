@@ -1,4 +1,12 @@
-"""Commonly used widgets for NOAA / MAC echosounder assessment tools"""
+"""
+Copyright (c) 2025, Center for Coastal and Ocean Mapping, University of New Hampshire
+All rights reserved.
+
+This file is part of BISTplotter and is licensed under the BSD 3-Clause License.
+See LICENSE file in the project root for full license details.
+
+Commonly used widgets for NOAA / MAC echosounder assessment tools
+"""
 
 
 from PyQt6 import QtWidgets, QtGui

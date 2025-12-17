@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
 """
+Copyright (c) 2025, Center for Coastal and Ocean Mapping, University of New Hampshire
+All rights reserved.
+
+This file is part of BISTplotter and is licensed under the BSD 3-Clause License.
+See LICENSE file in the project root for full license details.
+
 Created on Sat Sep 15 13:30:15 2018
 @author: kjerram and pjohnson   
 
