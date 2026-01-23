@@ -2338,13 +2338,49 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
 
     # plot rxn vs test number
     ax2 = plt.subplot(gs[1])
+    
+    # Check if data exceeds colorbar range and warn user
+    vmin = 30
+    vmax = 70
+    data_min = np.nanmin(rxn_all)
+    data_max = np.nanmax(rxn_all)
+    
+    warnings = []
+    if data_min < vmin:
+        warnings.append(f"WARNING: Data minimum ({data_min:.2f} dB) is below colorbar minimum ({vmin} dB). Values below {vmin} dB will be displayed in BLACK.")
+    if data_max > vmax:
+        warnings.append(f"WARNING: Data maximum ({data_max:.2f} dB) is above colorbar maximum ({vmax} dB). Values above {vmax} dB will be displayed in MAGENTA.")
+    
+    if warnings:
+        print("\n" + "="*80)
+        print("COLORBAR RANGE WARNING:")
+        for warning in warnings:
+            print(warning)
+        print(f"Data range: {data_min:.2f} to {data_max:.2f} dB")
+        print(f"Colorbar range: {vmin} to {vmax} dB")
+        print("="*80 + "\n")
+    
     try:
-        im = ax2.imshow(rxn_all, cmap=cmap, aspect='auto', vmin=30, vmax=70, )
+        # Get the colormap and set colors for out-of-range values
+        # Values below vmin will be black, values above vmax will be magenta
+        colormap = plt.get_cmap(cmap).copy()  # Use copy() to avoid modifying the global colormap
+        colormap.set_under(color='black')  # Black for values < vmin
+        colormap.set_over(color='magenta')  # Magenta for values > vmax
+        
+        im = ax2.imshow(rxn_all, cmap=colormap, aspect='auto', vmin=vmin, vmax=vmax)
         # im = ax2.imshow(rxn_all, cmap=cmap, aspect='auto', vmin=30, vmax=80, )
     except Exception as e:
-        print(f"Warning: Could not create imshow plot: {e}")
-        # Try with simpler parameters
-        im = ax2.imshow(rxn_all, cmap=cmap, aspect='auto')
+        print(f"Warning: Could not create imshow plot with custom colormap: {e}")
+        # Try with simpler parameters (fallback without custom under/over colors)
+        try:
+            colormap = plt.get_cmap(cmap).copy()
+            colormap.set_under(color='black')
+            colormap.set_over(color='magenta')
+            im = ax2.imshow(rxn_all, cmap=colormap, aspect='auto', vmin=vmin, vmax=vmax)
+        except Exception as e2:
+            print(f"Warning: Could not create imshow plot with vmin/vmax: {e2}")
+            # Final fallback without any limits
+            im = ax2.imshow(rxn_all, cmap=cmap, aspect='auto')
 
     try:
         plt.gca().invert_yaxis()  # invert y axis to match previous plots by Paul Johnson
@@ -2362,9 +2398,18 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
         ax_cbar = plt.subplot(gs[2])
         ax_cbar.set_visible(False)  # Hide the axes
         
-        # Create colorbar in the dedicated space
+        # Determine colorbar extend based on out-of-range values
+        extend = 'neither'
+        if data_min < vmin and data_max > vmax:
+            extend = 'both'
+        elif data_min < vmin:
+            extend = 'min'
+        elif data_max > vmax:
+            extend = 'max'
+        
+        # Create colorbar in the dedicated space with extend indicators
         cbar = fig.colorbar(im, ax=ax_cbar, shrink=0.8, orientation='horizontal', 
-                           fraction=0.8, pad=0.1)
+                           fraction=0.8, pad=0.1, extend=extend)
         cbar.set_label(r'RX Noise (dB re 1 $\mu$Pa/$\sqrt{Hz}$)', fontsize=12)
         cbar.ax.tick_params(labelsize=14)
         

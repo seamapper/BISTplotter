@@ -147,7 +147,8 @@ def clear_bist_session_config():
 # FUTURE: handle multiple TX Channels per file
 # __version__ = "9.9.9"
 # __version__ = "2025.1" # Added plotting GUI, Binned Speed vs Noise Plots
-__version__ = "2025.2" # All BISTs now plotted in GUI
+# __version__ = "2025.2" # All BISTs now plotted in GUI
+__version__ = "2026.1" # Changed the way the program handled noise outside of the 30-70dB range
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -288,18 +289,19 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             # PyInstaller creates a temp folder and stores path in _MEIPASS
             base_path = sys._MEIPASS
+            # In PyInstaller, the media folder is in sys._MEIPASS, so use relative_path directly
+            full_path = os.path.join(base_path, relative_path)
         except Exception:
             # If not running in PyInstaller bundle, use the media_path directly
             # The media folder is at the project root (same level as the script)
             base_path = self.media_path
-        
-        # If relative_path already includes "media/", extract just the filename
-        # Otherwise, construct the full path
-        if relative_path.startswith("media/"):
-            filename = os.path.basename(relative_path)
-            full_path = os.path.join(base_path, filename)
-        else:
-            full_path = os.path.join(base_path, relative_path)
+            # If relative_path already includes "media/", extract just the filename
+            # Otherwise, construct the full path
+            if relative_path.startswith("media/"):
+                filename = os.path.basename(relative_path)
+                full_path = os.path.join(base_path, filename)
+            else:
+                full_path = os.path.join(base_path, relative_path)
         
         # Debug: Print the paths being checked
         print(f"Debug: Checking path: {full_path}")
