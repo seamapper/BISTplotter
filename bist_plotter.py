@@ -65,7 +65,7 @@ multiple RX Noise/Spectrum tests
 
 """
 from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtGui import QDoubleValidator
+from PyQt6.QtGui import QDoubleValidator, QPalette, QColor
 from PyQt6.QtCore import Qt, QSize, QEvent
 import os
 import sys
@@ -87,6 +87,71 @@ from matplotlib import gridspec
 from gui_widgets import *
 from file_fun import remove_files
 import json
+
+
+def apply_dark_theme(app):
+    """Force the GUI to use a dark theme regardless of system/desktop theme."""
+    # Use Fusion style for consistent cross-platform dark look
+    app.setStyle('Fusion')
+    
+    # Build a dark palette
+    dark = QColor(45, 45, 45)
+    darker = QColor(35, 35, 35)
+    mid = QColor(60, 60, 60)
+    light = QColor(220, 220, 220)
+    
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, dark)
+    palette.setColor(QPalette.ColorRole.WindowText, light)
+    palette.setColor(QPalette.ColorRole.Base, darker)
+    palette.setColor(QPalette.ColorRole.AlternateBase, dark)
+    palette.setColor(QPalette.ColorRole.Text, light)
+    palette.setColor(QPalette.ColorRole.Button, dark)
+    palette.setColor(QPalette.ColorRole.ButtonText, light)
+    palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.white)
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+    palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
+    palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, dark)
+    palette.setColor(QPalette.ColorRole.ToolTipText, light)
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(140, 140, 140))
+    
+    app.setPalette(palette)
+    
+    # Optional: stylesheet for a few widgets that may not fully follow the palette
+    app.setStyleSheet("""
+        QGroupBox {
+            font-weight: bold;
+            border: 1px solid #555555;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+        }
+        QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit {
+            background-color: #2d2d2d;
+            border: 1px solid #555555;
+            border-radius: 3px;
+            padding: 2px;
+        }
+        QListWidget {
+            background-color: #2d2d2d;
+            border: 1px solid #555555;
+        }
+        QScrollBar:vertical {
+            background: #2d2d2d;
+            width: 12px;
+            border-radius: 6px;
+        }
+        QScrollBar::handle:vertical {
+            background: #555555;
+            border-radius: 6px;
+            min-height: 20px;
+        }
+    """)
 
 
 def load_bist_session_config():
@@ -148,7 +213,8 @@ def clear_bist_session_config():
 # __version__ = "9.9.9"
 # __version__ = "2025.1" # Added plotting GUI, Binned Speed vs Noise Plots
 # __version__ = "2025.2" # All BISTs now plotted in GUI
-__version__ = "2026.1" # Changed the way the program handled noise outside of the 30-70dB range
+# __version__ = "2026.1" # Changed the way the program handled noise outside of the 30-70dB range
+__version__ = "2026.2" # Added dark theme to the program
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -3988,6 +4054,7 @@ def save_bist_session_config(config):
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
+    apply_dark_theme(app)
 
     main = MainWindow()
     main.show()
