@@ -91,7 +91,7 @@ BISTplotter was developed and tested primarily with:
 - **EM122** (SIS 4 format)
 - **EM2040** (with some limitations for RX Noise BIST files)
 
-Support for other formats and features may require additional development.
+Support for other formats and features may require additional development. SIS 5 model parsing was updated in v2026.3 to correctly extract model numbers (e.g. EM2040, EM304) from the BIST header.
 
 ## Known Limitations
 
@@ -102,7 +102,7 @@ Support for other formats and features may require additional development.
 
 ## Version
 
-Current version: **2026.2**
+Current version: **2026.3**
 
 ## Authors
 

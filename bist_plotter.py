@@ -214,7 +214,8 @@ def clear_bist_session_config():
 # __version__ = "2025.1" # Added plotting GUI, Binned Speed vs Noise Plots
 # __version__ = "2025.2" # All BISTs now plotted in GUI
 # __version__ = "2026.1" # Changed the way the program handled noise outside of the 30-70dB range
-__version__ = "2026.2" # Added dark theme to the program
+# __version__ = "2026.2" # Added dark theme to the program
+__version__ = "2026.3" # Applied bug fix to model number determination
 
 
 class MainWindow(QtWidgets.QMainWindow):

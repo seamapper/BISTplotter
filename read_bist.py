@@ -2815,13 +2815,20 @@ def check_system_info(fname, sis_version=int(4)):
         i = 0
         while i < len(data):
             if data[i].find(header_str) > -1:  # if header is found, start parsing
-                temp_str = data[i].replace('-','').strip()  # remove all dashes
+                temp_str = data[i].replace('-', '').strip()  # remove all dashes
                 print('*** checking SIS 5 temp_str =', temp_str)
                 sys_info['date'] = temp_str[0:4] + '/' + temp_str[4:6] + '/' + temp_str[6:8]
                 # sys_info['time'] = temp_str[8:10] + ':' + temp_str[10:12] + ':' + temp_str[12:14]
                 # add ms to file time for consistency with individual test time format
                 sys_info['time'] = temp_str[8:10] + ':' + temp_str[10:12] + ':' + temp_str[12:14] + '.000'
-                sys_info['model'] = temp_str[temp_str.find('EM')+2:temp_str.find('_')]
+                idx_EM = temp_str.find('EM')  # find EM string for model number
+                temp_model = temp_str[idx_EM + 2:idx_EM + 5]  # check first three digits of model number
+                if temp_model == '204':
+                    temp_model = temp_str[idx_EM + 2:idx_EM + 6]  # keep 4 digits if 2040 or 2042
+                print('*********got temp_model =', temp_model)
+                sys_info['model'] = temp_model
+                # sys_info['model'] = temp_str[temp_str.find('EM')+2:temp_str.find('_')]
+
                 print('got sys_info =', sys_info)
                 sys_info['sn'] = -1  # need to consider; some BISTs have PU sn, some have array sns
                 temp_str = temp_str[temp_str.find('_') + 1:]  # shorten to portion of string after 'EM###_'
