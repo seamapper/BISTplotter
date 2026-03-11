@@ -20,7 +20,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib.ticker import FormatStrFormatter
-from matplotlib.colors import LinearSegmentedColormap
 import datetime
 import re
 import os
@@ -2159,35 +2158,6 @@ def parse_rx_noise(fname, sis_version=int(4)):
         return []
 
 
-def _inferno_darkorchid_cmap():
-    """Inferno colormap with dark orchid at the lowest level instead of near-black."""
-    inferno = plt.get_cmap('inferno')
-    colors = inferno(np.linspace(0, 1, 256))
-    dark_orchid = np.array([153/255, 50/255, 204/255, 1.0])
-    # Replace bottom ~8% of colormap (first 20 entries) so colorbar clearly shows dark orchid
-    n_low = 20
-    for i in range(n_low):
-        t = i / (n_low - 1) if n_low > 1 else 1.0  # blend from dark orchid (0) to inferno (1)
-        colors[i] = (1 - t) * dark_orchid + t * colors[i]
-    return LinearSegmentedColormap.from_list('inferno_darkorchid', colors, N=256)
-
-
-def _inferno_from_step40_cmap():
-    """Inferno colormap with scale starting at original step 40 (bottom = inferno index 40)."""
-    inferno = plt.get_cmap('inferno')
-    # Sample from 40/255 to 1.0 so bottom of scale is inferno's step-40 color
-    colors = inferno(np.linspace(40/255, 1, 256))
-    return LinearSegmentedColormap.from_list('inferno_from_step40', colors, N=256)
-
-
-def _hot_from_step24_cmap():
-    """Hot colormap with scale starting at original step 24 (bottom = hot index 24)."""
-    hot = plt.get_cmap('hot')
-    # Sample from 24/255 to 1.0 so bottom of scale is hot's step-24 color
-    colors = hot(np.linspace(24/255, 1, 256))
-    return LinearSegmentedColormap.from_list('hot_from_step24', colors, N=256)
-
-
 # plot RX Noise versus speed or azimuth
 def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test_type='speed',
                   param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], cmap='jet', return_fig=False):
@@ -2393,13 +2363,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     try:
         # Get the colormap and set colors for out-of-range values
         # Values below vmin will be black, values above vmax will be magenta
-        # Inferno: use scale starting at original step 40; Hot: use scale starting at original step 24
-        if cmap == 'inferno':
-            colormap = _inferno_from_step40_cmap().copy()
-        elif cmap == 'hot':
-            colormap = _hot_from_step24_cmap().copy()
-        else:
-            colormap = plt.get_cmap(cmap).copy()
+        colormap = plt.get_cmap(cmap).copy()  # Use copy() to avoid modifying the global colormap
         colormap.set_under(color='black')  # Black for values < vmin
         colormap.set_over(color='magenta')  # Magenta for values > vmax
         
@@ -2409,12 +2373,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
         print(f"Warning: Could not create imshow plot with custom colormap: {e}")
         # Try with simpler parameters (fallback without custom under/over colors)
         try:
-            if cmap == 'inferno':
-                colormap = _inferno_from_step40_cmap().copy()
-            elif cmap == 'hot':
-                colormap = _hot_from_step24_cmap().copy()
-            else:
-                colormap = plt.get_cmap(cmap).copy()
+            colormap = plt.get_cmap(cmap).copy()
             colormap.set_under(color='black')
             colormap.set_over(color='magenta')
             im = ax2.imshow(rxn_all, cmap=colormap, aspect='auto', vmin=vmin, vmax=vmax)
@@ -2856,30 +2815,19 @@ def check_system_info(fname, sis_version=int(4)):
         i = 0
         while i < len(data):
             if data[i].find(header_str) > -1:  # if header is found, start parsing
-                temp_str = data[i].replace('-', '').strip()  # remove all dashes
+                temp_str = data[i].replace('-','').strip()  # remove all dashes
                 print('*** checking SIS 5 temp_str =', temp_str)
                 sys_info['date'] = temp_str[0:4] + '/' + temp_str[4:6] + '/' + temp_str[6:8]
                 # sys_info['time'] = temp_str[8:10] + ':' + temp_str[10:12] + ':' + temp_str[12:14]
                 # add ms to file time for consistency with individual test time format
                 sys_info['time'] = temp_str[8:10] + ':' + temp_str[10:12] + ':' + temp_str[12:14] + '.000'
-                idx_EM = temp_str.find('EM')  # find EM string for model number
-                temp_model = temp_str[idx_EM + 2:idx_EM + 5]  # check first three digits of model number
-                if temp_model == '204':
-                    temp_model = temp_str[idx_EM + 2:idx_EM + 6]  # keep 4 digits if 2040 or 2042
-                print('*********got temp_model =', temp_model)
-                sys_info['model'] = temp_model
-                # sys_info['model'] = temp_str[temp_str.find('EM')+2:temp_str.find('_')]
-
+                sys_info['model'] = temp_str[temp_str.find('EM')+2:temp_str.find('_')]
                 print('got sys_info =', sys_info)
                 sys_info['sn'] = -1  # need to consider; some BISTs have PU sn, some have array sns
                 temp_str = temp_str[temp_str.find('_') + 1:]  # shorten to portion of string after 'EM###_'
                 sn_end = re.search(r'\D', temp_str)
-                if sn_end is not None:
-                    header_sn = temp_str[:sn_end.start(0)]  # cut off at first non-digit in sn string
-                    sys_info['sn'] = 'FN-' + header_sn  # FN = from BIST header/filename (may be last digits of IP)
-                else:
-                    sys_info['sn'] = 'FN-' + temp_str if temp_str else -1  # all digits or empty
-                print('storing SIS 5 s/n from BIST header (FN- prefix = from header/filename; may be last two digits of IP address)')
+                sys_info['sn'] = temp_str[:sn_end.start(0)]  # cut off at first non-digit in sn string
+                print('storing SIS 5 s/n from BIST header (may actually be last two digits of IP address)')
                 break
 
             else:
@@ -2898,8 +2846,7 @@ def check_system_info(fname, sis_version=int(4)):
             if ''.join([c for c in data[i] if c.isalpha()]).lower() == 'puserial':  # SysInfo and Software
                 print('found ''puserial''; storing number at the end')
                 # print(data[i].split(pu_str)[1].strip())
-                pu_sn = ''.join([c for c in data[i] if c.isnumeric()])  # serial number from PU serial line
-                sys_info['sn'] = 'PU-' + pu_sn  # PU = from PU serial line in file
+                sys_info['sn'] = ''.join([c for c in data[i] if c.isnumeric()])  # store serial number in this line
                 # sys_info['sn'] = data[i].split(pu_str)[1].strip()  # store serial number string
                 print('updating serial number to PU serial number = ', sys_info['sn'], '; breaking from check_sys_info')
                 break

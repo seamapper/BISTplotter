@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='BIST Plotter V2026.3',
+    name='BIST_Plotter_V2026.3',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -1761,14 +1761,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
             if sys_info['sn']:
                 if not self.sn_updated:  # update serial number with first SN found
-                    self.sn_tb.setText(sys_info['sn'])
+                    self.sn_tb.setText(str(sys_info['sn']))
                     self.update_log('Updated serial number to ' + self.sn_tb.text() + ' (first S/N found)')
 
-                    if self.sn_tb.text() in ['40', '60', '71']:  # warn user of PU IP address bug in SIS 5 BISTs
-                        self.update_log('***WARNING: SIS 5 serial number parsed from the BIST header may be the last '
-                                        'digits of the IP address (no specific PU serial number found in file); '
-                                        'update system info as needed')
-                        self.conflicting_fields.append('sn')
+                    # SIS 5 only: explain PU- vs FN- prefix in activity log
+                    if sis_ver_found == 5 and (str(sys_info['sn']).startswith('PU-') or str(sys_info['sn']).startswith('FN-')):
+                        self.update_log('SIS 5 serial number: PU- = from PU serial line in file; FN- = from BIST header/filename')
+                        if str(sys_info['sn']).startswith('FN-'):
+                            self.update_log('***WARNING: FN- value may be last digits of IP (no PU serial in file); update if needed')
+                            self.conflicting_fields.append('sn')
 
                     self.sn_updated = True
 
