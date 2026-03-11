@@ -19,6 +19,7 @@ The application provides an intuitive GUI for:
 - Export capabilities for analysis results
 - **Dark theme** – GUI uses a dark theme regardless of system settings (plot area keeps default white background)
 - **RX Noise vs Speed** – Values outside the 30–70 dB colorbar range are shown in black (below 30 dB) or magenta (above 70 dB), with console warnings when data exceeds the range
+- **Colormaps** – Jet, Inferno, Hot, RedBlue, and CoolWarm. Inferno and Hot use custom ranges (bottom at step 40 and 24 respectively). RedBlue (bwr) and CoolWarm support a configurable **Center** (inflection point in dB, default 55) for the blue–white–red transition
 
 ## Download
 
@@ -102,7 +103,7 @@ Support for other formats and features may require additional development. SIS 5
 
 ## Version
 
-Current version: **2026.3**
+Current version: **2026.4**
 
 ## Authors
 

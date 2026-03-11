@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Generic spec for BIST Plotter. Update name= in EXE() to match __version__ in bist_plotter.py (e.g. BIST_Plotter_V2026.4).
 
 
 a = Analysis(
@@ -22,7 +23,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='BIST_Plotter_V2026.3',
+    name='BIST_Plotter_V2026.4',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

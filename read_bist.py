@@ -2188,9 +2188,41 @@ def _hot_from_step24_cmap():
     return LinearSegmentedColormap.from_list('hot_from_step24', colors, N=256)
 
 
+def _redblue_cmap(vmin, vmax, redblue_center):
+    """Blue-white-red (bwr) colormap with inflection (white) at redblue_center in data units."""
+    bwr = plt.get_cmap('bwr')
+    nw = (redblue_center - vmin) / (vmax - vmin) if vmax != vmin else 0.5
+    nw = max(0.001, min(0.999, nw))  # avoid div by zero, keep in (0,1)
+    colors = np.zeros((256, 4))
+    for i in range(256):
+        norm = i / 255.0
+        if norm <= nw:
+            bwr_in = 0.5 * (norm / nw) if nw > 0 else 0
+        else:
+            bwr_in = 0.5 + 0.5 * (norm - nw) / (1 - nw) if nw < 1 else 1
+        colors[i] = bwr(bwr_in)
+    return LinearSegmentedColormap.from_list('redblue', colors, N=256)
+
+
+def _coolwarm_center_cmap(vmin, vmax, center):
+    """Coolwarm colormap with inflection (neutral) at center in data units."""
+    coolwarm = plt.get_cmap('coolwarm')
+    nw = (center - vmin) / (vmax - vmin) if vmax != vmin else 0.5
+    nw = max(0.001, min(0.999, nw))
+    colors = np.zeros((256, 4))
+    for i in range(256):
+        norm = i / 255.0
+        if norm <= nw:
+            cw_in = 0.5 * (norm / nw) if nw > 0 else 0
+        else:
+            cw_in = 0.5 + 0.5 * (norm - nw) / (1 - nw) if nw < 1 else 1
+        colors[i] = coolwarm(cw_in)
+    return LinearSegmentedColormap.from_list('coolwarm_center', colors, N=256)
+
+
 # plot RX Noise versus speed or azimuth
 def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test_type='speed',
-                  param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], cmap='jet', return_fig=False):
+                  param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], cmap='jet', redblue_center=55, return_fig=False):
     # declare array for plotting all tests with nrows = n_elements and ncols = n_tests
     # np.size returns number of items if all lists are same length (e.g., AutoBIST script in SIS 4), but returns number
     # of lists if they have different lengths (e.g., files from SIS 5 continuous BIST recording)
@@ -2394,10 +2426,15 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
         # Get the colormap and set colors for out-of-range values
         # Values below vmin will be black, values above vmax will be magenta
         # Inferno: use scale starting at original step 40; Hot: use scale starting at original step 24
+        # RedBlue / CoolWarm: diverging with inflection at redblue_center (default 55 dB)
         if cmap == 'inferno':
             colormap = _inferno_from_step40_cmap().copy()
         elif cmap == 'hot':
             colormap = _hot_from_step24_cmap().copy()
+        elif cmap == 'redblue':
+            colormap = _redblue_cmap(vmin, vmax, redblue_center).copy()
+        elif cmap == 'coolwarm':
+            colormap = _coolwarm_center_cmap(vmin, vmax, redblue_center).copy()
         else:
             colormap = plt.get_cmap(cmap).copy()
         colormap.set_under(color='black')  # Black for values < vmin
@@ -2413,6 +2450,10 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
                 colormap = _inferno_from_step40_cmap().copy()
             elif cmap == 'hot':
                 colormap = _hot_from_step24_cmap().copy()
+            elif cmap == 'redblue':
+                colormap = _redblue_cmap(vmin, vmax, redblue_center).copy()
+            elif cmap == 'coolwarm':
+                colormap = _coolwarm_center_cmap(vmin, vmax, redblue_center).copy()
             else:
                 colormap = plt.get_cmap(cmap).copy()
             colormap.set_under(color='black')

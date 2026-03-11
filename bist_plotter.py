@@ -215,7 +215,8 @@ def clear_bist_session_config():
 # __version__ = "2025.2" # All BISTs now plotted in GUI
 # __version__ = "2026.1" # Changed the way the program handled noise outside of the 30-70dB range
 # __version__ = "2026.2" # Added dark theme to the program
-__version__ = "2026.3" # Applied bug fix to model number determination
+# __version__ = "2026.3" # Applied bug fix to model number determination
+__version__ = "2026.4" # Added RedBlue and CoolWarm colormaps
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -475,8 +476,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         cmap_lbl = Label('Colormap:', lblw, lblh, 'cmap_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         cmap_lbl.setFixedWidth(lblw)
-        self.cmap_cbox = ComboBox(['Jet', 'Inferno', 'Hot'], 70, btnh, 'cmap_cbox', 'Select desired colormap')
-        cmap_layout = BoxLayout([cmap_lbl, self.cmap_cbox], 'h', add_stretch=True)
+        self.cmap_cbox = ComboBox(['Jet', 'Inferno', 'Hot', 'RedBlue', 'CoolWarm'], 70, btnh, 'cmap_cbox', 'Select desired colormap')
+        self.redblue_center_spin = QtWidgets.QDoubleSpinBox()
+        self.redblue_center_spin.setRange(30, 70)
+        self.redblue_center_spin.setValue(55)
+        self.redblue_center_spin.setDecimals(1)
+        self.redblue_center_spin.setFixedWidth(55)
+        self.redblue_center_spin.setToolTip('Center (dB): inflection point for RedBlue and CoolWarm (blue–white–red at this value)')
+        redblue_lbl = Label('Center:', 38, lblh, 'redblue_center_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+        def _show_center(t):
+            self.redblue_center_spin.setVisible(t in ('RedBlue', 'CoolWarm'))
+        self.redblue_center_spin.setVisible(self.cmap_cbox.currentText() in ('RedBlue', 'CoolWarm'))
+        self.cmap_cbox.currentTextChanged.connect(_show_center)
+        cmap_layout = BoxLayout([cmap_lbl, self.cmap_cbox, redblue_lbl, self.redblue_center_spin], 'h', add_stretch=True)
 
         self.select_type_btn = PushButton('Select BISTs', btnw, btnh, 'select_type',
                                           'Filter and select source files by the chosen BIST type')
@@ -2960,7 +2972,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'param_adjust': param_adjust,
                                 'param_lims': param_lims,
                                 'cmap': self.cmap_cbox.currentText().lower().strip(),
-                                'sort': self.sort_cbox.currentText().lower().strip()
+                                'sort': self.sort_cbox.currentText().lower().strip(),
+                                'redblue_center': self.redblue_center_spin.value()
                             }
                             self.frequency_data.append(plot_data)
                             
@@ -2974,6 +2987,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                      param_lims=param_lims,
                                                                      cmap=self.cmap_cbox.currentText().lower().strip(),
                                                                      sort=self.sort_cbox.currentText().lower().strip(),
+                                                                     redblue_center=self.redblue_center_spin.value(),
                                                                      return_fig=True)
                             self.all_figures.append(figure)
                             
@@ -3027,7 +3041,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'param_adjust': param_adjust,
                                     'param_lims': param_lims,
                                     'cmap': self.cmap_cbox.currentText().lower().strip(),
-                                    'sort': self.sort_cbox.currentText().lower().strip()
+                                    'sort': self.sort_cbox.currentText().lower().strip(),
+                                    'redblue_center': self.redblue_center_spin.value()
                                 }
                                 self.frequency_data.append(plot_data)
                                 
@@ -3041,6 +3056,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                          param_lims=param_lims,
                                                                          cmap=self.cmap_cbox.currentText().lower().strip(),
                                                                          sort=self.sort_cbox.currentText().lower().strip(),
+                                                                         redblue_center=self.redblue_center_spin.value(),
                                                                          return_fig=True)
                                 self.all_figures.append(figure)
                                 self.update_log(f"Generated chart for frequency {freq_list[f]}")
@@ -3593,6 +3609,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                    param_lims=plot_data['param_lims'],
                                                    cmap=plot_data['cmap'],
                                                    sort=plot_data['sort'],
+                                                   redblue_center=plot_data.get('redblue_center', 55),
                                                    return_fig=True)
                 else:
                     # Fallback for any other plot types
