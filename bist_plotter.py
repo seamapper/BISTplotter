@@ -476,17 +476,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         cmap_lbl = Label('Colormap:', lblw, lblh, 'cmap_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         cmap_lbl.setFixedWidth(lblw)
-        self.cmap_cbox = ComboBox(['Jet', 'Inferno', 'Hot', 'RedBlue', 'CoolWarm'], 70, btnh, 'cmap_cbox', 'Select desired colormap')
+        self.cmap_cbox = ComboBox(['Jet', 'Inferno', 'Hot', 'RedBlue', 'CoolWarm', 'Reversed Managua'], 70, btnh, 'cmap_cbox', 'Select desired colormap')
         self.redblue_center_spin = QtWidgets.QDoubleSpinBox()
         self.redblue_center_spin.setRange(30, 70)
         self.redblue_center_spin.setValue(55)
         self.redblue_center_spin.setDecimals(1)
         self.redblue_center_spin.setFixedWidth(55)
-        self.redblue_center_spin.setToolTip('Center (dB): inflection point for RedBlue and CoolWarm (blue–white–red at this value)')
+        self.redblue_center_spin.setToolTip('Center (dB): inflection point for RedBlue, CoolWarm, and Reversed Managua')
         redblue_lbl = Label('Center:', 38, lblh, 'redblue_center_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         def _show_center(t):
-            self.redblue_center_spin.setVisible(t in ('RedBlue', 'CoolWarm'))
-        self.redblue_center_spin.setVisible(self.cmap_cbox.currentText() in ('RedBlue', 'CoolWarm'))
+            self.redblue_center_spin.setVisible(t in ('RedBlue', 'CoolWarm', 'Reversed Managua'))
+        self.redblue_center_spin.setVisible(self.cmap_cbox.currentText() in ('RedBlue', 'CoolWarm', 'Reversed Managua'))
         self.cmap_cbox.currentTextChanged.connect(_show_center)
         cmap_layout = BoxLayout([cmap_lbl, self.cmap_cbox, redblue_lbl, self.redblue_center_spin], 'h', add_stretch=True)
 

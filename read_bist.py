@@ -2220,6 +2220,26 @@ def _coolwarm_center_cmap(vmin, vmax, center):
     return LinearSegmentedColormap.from_list('coolwarm_center', colors, N=256)
 
 
+def _reversed_managua_center_cmap(vmin, vmax, center):
+    """Reversed Managua colormap (Crameri, from cmcrameri) with middle (inflection) at center in data units."""
+    try:
+        import cmcrameri.cm as cmc
+        managua_r = cmc.managua_r
+    except ImportError:
+        raise ImportError('Reversed Managua colormap requires the cmcrameri package. Install with: pip install cmcrameri')
+    nw = (center - vmin) / (vmax - vmin) if vmax != vmin else 0.5
+    nw = max(0.001, min(0.999, nw))
+    colors = np.zeros((256, 4))
+    for i in range(256):
+        norm = i / 255.0
+        if norm <= nw:
+            m_in = 0.5 * (norm / nw) if nw > 0 else 0
+        else:
+            m_in = 0.5 + 0.5 * (norm - nw) / (1 - nw) if nw < 1 else 1
+        colors[i] = managua_r(m_in)
+    return LinearSegmentedColormap.from_list('reversed_managua_center', colors, N=256)
+
+
 # plot RX Noise versus speed or azimuth
 def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test_type='speed',
                   param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], cmap='jet', redblue_center=55, return_fig=False):
@@ -2426,7 +2446,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
         # Get the colormap and set colors for out-of-range values
         # Values below vmin will be black, values above vmax will be magenta
         # Inferno: use scale starting at original step 40; Hot: use scale starting at original step 24
-        # RedBlue / CoolWarm: diverging with inflection at redblue_center (default 55 dB)
+        # RedBlue / CoolWarm / Reversed Managua: inflection at redblue_center (default 55 dB)
         if cmap == 'inferno':
             colormap = _inferno_from_step40_cmap().copy()
         elif cmap == 'hot':
@@ -2435,6 +2455,8 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
             colormap = _redblue_cmap(vmin, vmax, redblue_center).copy()
         elif cmap == 'coolwarm':
             colormap = _coolwarm_center_cmap(vmin, vmax, redblue_center).copy()
+        elif cmap == 'reversed managua':
+            colormap = _reversed_managua_center_cmap(vmin, vmax, redblue_center).copy()
         else:
             colormap = plt.get_cmap(cmap).copy()
         colormap.set_under(color='black')  # Black for values < vmin
@@ -2454,6 +2476,8 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
                 colormap = _redblue_cmap(vmin, vmax, redblue_center).copy()
             elif cmap == 'coolwarm':
                 colormap = _coolwarm_center_cmap(vmin, vmax, redblue_center).copy()
+            elif cmap == 'reversed managua':
+                colormap = _reversed_managua_center_cmap(vmin, vmax, redblue_center).copy()
             else:
                 colormap = plt.get_cmap(cmap).copy()
             colormap.set_under(color='black')
