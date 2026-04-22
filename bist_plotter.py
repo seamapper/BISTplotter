@@ -87,6 +87,7 @@ from matplotlib import gridspec
 from gui_widgets import *
 from file_fun import remove_files
 import json
+from version import __version__
 
 
 def apply_dark_theme(app):
@@ -207,17 +208,6 @@ def clear_bist_session_config():
     except Exception as e:
         print(f"Warning: Could not clear BIST session config: {e}")
 
-#__version__ = "0.2.6"  # v2.6 failing for SIS 4 TX Channels (possibly others), but frozen v2.5 works;
-# v2.5 fixed RX channels unit bug
-# FUTURE: handle multiple TX Channels per file
-# __version__ = "9.9.9"
-# __version__ = "2025.1" # Added plotting GUI, Binned Speed vs Noise Plots
-# __version__ = "2025.2" # All BISTs now plotted in GUI
-# __version__ = "2026.1" # Changed the way the program handled noise outside of the 30-70dB range
-# __version__ = "2026.2" # Added dark theme to the program
-# __version__ = "2026.3" # Applied bug fix to model number determination
-__version__ = "2026.4" # Added RedBlue and CoolWarm colormaps
-
 
 class MainWindow(QtWidgets.QMainWindow):
     media_path = os.path.join(os.path.dirname(__file__), "media")
@@ -229,7 +219,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mainWidget = QtWidgets.QWidget(self)
         self.setCentralWidget(self.mainWidget)
         self.setFixedSize(1600, 1000)  # Set fixed window size to 1600x1000 (no resizing allowed)
-        self.setWindowTitle('UNH/CCOM-JHC & MAC - BIST Plotter v.%s' % __version__)
+        self.setWindowTitle(
+            'UNH/CCOM-JHC & MAC - BIST Plotter v.%s - kjerram@ccom.unh.edu & pjohnson@ccom.unh.edu' % __version__
+        )
         self.setWindowIcon(QtGui.QIcon(os.path.join(self.media_path, "icon.png")))
 
         if os.name == 'nt':  # necessary to explicitly set taskbar icon
@@ -966,6 +958,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Start with a reasonable default size that will be adjusted when plots are loaded
         self.plot_figure = Figure(figsize=(8, 8))
         self.plot_figure_canvas = FigureCanvas(self.plot_figure)
+        self.plot_figure_canvas.setMouseTracking(True)
         plot_window_layout.addWidget(self.plot_figure_canvas)
         
         # Add navigation controls for multiple charts
@@ -988,6 +981,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.next_chart_btn.setToolTip("Show next chart")
         self.next_chart_btn.setEnabled(False)
         nav_layout.addWidget(self.next_chart_btn)
+        self.prev_chart_btn.clicked.connect(self.show_previous_frequency)
+        self.next_chart_btn.clicked.connect(self.show_next_frequency)
         
         plot_window_layout.addLayout(nav_layout)
         plot_window_gb.setLayout(plot_window_layout)
@@ -2988,7 +2983,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                      cmap=self.cmap_cbox.currentText().lower().strip(),
                                                                      sort=self.sort_cbox.currentText().lower().strip(),
                                                                      redblue_center=self.redblue_center_spin.value(),
-                                                                     return_fig=True)
+                                                                     return_fig=True,
+                                                                     gui_embed=True)
                             self.all_figures.append(figure)
                             
                             # Display the plot and set up navigation
@@ -3057,7 +3053,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                          cmap=self.cmap_cbox.currentText().lower().strip(),
                                                                          sort=self.sort_cbox.currentText().lower().strip(),
                                                                          redblue_center=self.redblue_center_spin.value(),
-                                                                         return_fig=True)
+                                                                         return_fig=True,
+                                                                         gui_embed=True)
                                 self.all_figures.append(figure)
                                 self.update_log(f"Generated chart for frequency {freq_list[f]}")
                             except Exception as e:
@@ -3331,6 +3328,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception as e:
                 self.update_log(f"Warning: Could not update canvas: {e}")
             
+            read_bist.attach_rx_noise_speed_hover(self.plot_figure, self.plot_figure_canvas)
             self.update_log(f"Plot displayed in GUI window successfully")
             
         except Exception as e:
@@ -3610,7 +3608,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                    cmap=plot_data['cmap'],
                                                    sort=plot_data['sort'],
                                                    redblue_center=plot_data.get('redblue_center', 55),
-                                                   return_fig=True)
+                                                   return_fig=True,
+                                                   gui_embed=True)
                 else:
                     # Fallback for any other plot types
                     self.update_log(f"Unknown plot type: plot_type={plot_type}, test_type={test_type}")
@@ -3648,6 +3647,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plot_figure_canvas.draw()
                 self.plot_figure_canvas.flush_events()
                 QtWidgets.QApplication.processEvents()
+                read_bist.attach_rx_noise_speed_hover(figure, self.plot_figure_canvas)
                 
                 self.update_log(f"Displayed chart {self.current_chart_index + 1} of {self.total_charts}")
                 

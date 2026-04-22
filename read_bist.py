@@ -21,6 +21,7 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib.ticker import FormatStrFormatter
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.transforms import Bbox, BboxTransform
 import datetime
 import re
 import os
@@ -2240,9 +2241,112 @@ def _reversed_managua_center_cmap(vmin, vmax, center):
     return LinearSegmentedColormap.from_list('reversed_managua_center', colors, N=256)
 
 
+def _imshow_cursor_row_col(im, event):
+    """Map a mouse event to (row, col) indices into im.get_array(), or None if outside."""
+    xmin, xmax, ymin, ymax = im.get_extent()
+    if im.origin == 'upper':
+        ymin, ymax = ymax, ymin
+    arr = im.get_array()
+    if arr.size == 0:
+        return None
+    data_extent = Bbox([[xmin, ymin], [xmax, ymax]])
+    array_extent = Bbox([[0, 0], [arr.shape[1], arr.shape[0]]])
+    trans = im.get_transform().inverted() + BboxTransform(
+        boxin=data_extent, boxout=array_extent
+    )
+    point = trans.transform([event.x, event.y])
+    if any(np.isnan(point)):
+        return None
+    col_j, row_i = int(point[0]), int(point[1])
+    if not (0 <= row_i < arr.shape[0]) or not (0 <= col_j < arr.shape[1]):
+        return None
+    return row_i, col_j
+
+
+def _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, canvas=None):
+    """Hover tooltip on the RX Noise heatmap for speed plots (SOG, test #, module #, noise).
+
+    *canvas* should be the widget canvas (e.g. ``FigureCanvasQTAgg``) when embedding in Qt so
+    ``motion_notify_event`` callbacks match the canvas that receives mouse moves.
+    """
+    target_canvas = canvas if canvas is not None else fig.canvas
+    cid_old = getattr(fig, '_bist_rx_noise_hover_cid', None)
+    canvas_old = getattr(fig, '_bist_rx_noise_hover_canvas', None)
+    if cid_old is not None and canvas_old is not None:
+        try:
+            canvas_old.mpl_disconnect(cid_old)
+        except (ValueError, AttributeError):
+            pass
+        fig._bist_rx_noise_hover_cid = None
+        fig._bist_rx_noise_hover_canvas = None
+    ann_old = getattr(fig, '_bist_rx_noise_tooltip_artist', None)
+    if ann_old is not None:
+        try:
+            ann_old.remove()
+        except (ValueError, AttributeError):
+            pass
+        fig._bist_rx_noise_tooltip_artist = None
+
+    tooltip = fig.text(
+        0.015, 0.985, '',
+        transform=fig.transFigure,
+        ha='left',
+        va='top',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.95, edgecolor='gray'),
+        fontsize=9,
+        visible=False,
+        zorder=1000,
+    )
+    fig._bist_rx_noise_tooltip_artist = tooltip
+
+    def on_hover(event):
+        if event.canvas is not target_canvas:
+            return
+        # Authoritative hit test for AxesImage (works when inaxes is ambiguous)
+        if im.get_cursor_data(event) is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                target_canvas.draw_idle()
+            return
+        idx = _imshow_cursor_row_col(im, event)
+        if idx is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                target_canvas.draw_idle()
+            return
+        row_i, col_j = idx
+        sog = float(param_all[col_j])
+        noise_val = rxn_all[row_i, col_j]
+        if np.ma.is_masked(noise_val):
+            noise_str = 'N/A'
+        else:
+            noise_str = f'{float(noise_val):.2f} dB'
+        tooltip.set_text(
+            f'SOG (kt): {sog:.2f}\n'
+            f'Test #: {col_j + 1}\n'
+            f'RX Module #: {row_i}\n'
+            f'RX Noise Level: {noise_str}'
+        )
+        tooltip.set_visible(True)
+        target_canvas.draw_idle()
+
+    fig._bist_rx_noise_hover_cid = target_canvas.mpl_connect('motion_notify_event', on_hover)
+    fig._bist_rx_noise_hover_canvas = target_canvas
+
+
+def attach_rx_noise_speed_hover(fig, canvas=None):
+    """Connect RX Noise vs. speed hover tooltip using data stored on *fig* by plot_rx_noise."""
+    payload = getattr(fig, '_bist_rx_noise_hover', None)
+    if payload is None:
+        return
+    ax_im, im, rxn_all, param_all = payload
+    _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, canvas=canvas)
+
+
 # plot RX Noise versus speed or azimuth
 def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test_type='speed',
-                  param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], cmap='jet', redblue_center=55, return_fig=False):
+                  param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], cmap='jet', redblue_center=55,
+                  return_fig=False, gui_embed=False):
     # declare array for plotting all tests with nrows = n_elements and ncols = n_tests
     # np.size returns number of items if all lists are same length (e.g., AutoBIST script in SIS 4), but returns number
     # of lists if they have different lengths (e.g., files from SIS 5 continuous BIST recording)
@@ -2389,10 +2493,12 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     rxn_all = rxn_all[:, s]
 
     # plot the RX Noise data organized for imshow; this will have test num xlabel
-    try:
-        plt.close('all')
-    except Exception as e:
-        print(f"Warning: Could not close previous plots: {e}")
+    # Avoid plt.close('all') when embedded in PyQt: it can destroy the figure still bound to the GUI canvas.
+    if not gui_embed:
+        try:
+            plt.close('all')
+        except Exception as e:
+            print(f"Warning: Could not close previous plots: {e}")
     axfsize = 16  # uniform axis font size
     subplot_height_ratio = 4  # top plot will be 1/Nth of total figure height
 
@@ -2489,7 +2595,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
             im = ax2.imshow(rxn_all, cmap=cmap, aspect='auto')
 
     try:
-        plt.gca().invert_yaxis()  # invert y axis to match previous plots by Paul Johnson
+        ax2.invert_yaxis()  # heatmap y-axis (gca() could be colorbar or another subplot)
         ax2.set_xlabel('Test Number', fontsize=axfsize)
         ax2.set_ylabel('RX Module (index starts at 0)', fontsize=axfsize)
     except Exception as e:
@@ -2648,6 +2754,12 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     except Exception as e:
         print(f"Warning: Could not set grid for ax2: {e}")
         # Continue without grid if there's an error
+
+    if test_type == 'speed':
+        # Defer mpl_connect when gui_embed=True: pyplot's canvas is replaced by the Qt canvas in bist_plotter.
+        fig._bist_rx_noise_hover = (ax2, im, rxn_all, np.asarray(param_all))
+        if return_fig and not gui_embed:
+            attach_rx_noise_speed_hover(fig, canvas=None)
 
     # set the super title
     print('sorting out the date string from rxn[date]=', rxn['date'])
