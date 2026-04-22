@@ -625,7 +625,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sort_cbox = ComboBox(['Ascending', 'Descending', 'Unsorted', 'Reverse'], 80, 20, 'sort_cbox',
                                   'Select the test parameter sort order for plotting ("Unsorted" will plot tests '
                                   'in the order they were parsed)')
-        sort_order_layout = BoxLayout([sort_order_lbl, self.sort_cbox], 'h')
+        self.ignore_sis5_speeds_chk = CheckBox('Ignore SiS5 Speeds', False, 'ignore_sis5_speeds_chk',
+                                               'Ignore speed parsed from SiS5 file contents and parse speed from '
+                                               'filename using the Filename string format')
+        sort_order_layout = BoxLayout([sort_order_lbl, self.sort_cbox, self.ignore_sis5_speeds_chk], 'h')
 
         # default_test_params_layout = BoxLayout([prm_str_layout, prm_unit_layout], 'v')
         # default_test_params_layout = BoxLayout([prm_str_layout, swell_dir_layout], 'v')
@@ -2011,7 +2014,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         # if bist_temp['speed'] == []:  # try to get speed from filename if not parsed from BIST
                         # try to get speed from filename if SOG was not parsed (e.g., SIS 4) OR if test is not for SOG
                         # if bist_temp['speed'] == [] or self.prm_unit_cbox.currentText().lower().find('sog') == -1:
-                        if bist_temp['speed'] == [] or \
+                        if bist_temp['speed'] == [] or self.ignore_sis5_speeds_chk.isChecked() or \
                             self.prm_unit_cbox.currentText().split()[0].lower() not in ['sog', 'stw']:
 
                             print('getting bist_temp[speed_bist] from the filename for test units: ', self.prm_unit_cbox.currentText())
