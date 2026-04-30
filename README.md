@@ -1,5 +1,7 @@
 # BISTplotter
 
+![Example Plot](media/BIST_Plotter.jpg)
+
 A graphical tool for analyzing and visualizing Kongsberg multibeam echosounder Built-In Self-Test (BIST) files. BISTplotter helps assess EM multibeam system performance and hardware health by parsing and plotting various BIST test results.
 
 ## Features
@@ -20,6 +22,14 @@ The application provides an intuitive GUI for:
 - **Dark theme** – GUI uses a dark theme regardless of system settings (plot area keeps default white background)
 - **RX Noise vs Speed** – Values outside the 30–70 dB colorbar range are shown in black (below 30 dB) or magenta (above 70 dB), with console warnings when data exceeds the range
 - **Colormaps** – Jet, Inferno, Hot, RedBlue, and CoolWarm. Inferno and Hot use custom ranges (bottom at step 40 and 24 respectively). RedBlue (bwr) and CoolWarm support a configurable **Center** (inflection point in dB, default 55) for the blue–white–red transition
+- **TX/RX channel out-of-range coloring** – TX and RX channel heatmaps now indicate values outside the colorbar range using black (below min) and magenta (above max), including colorbar extend indicators
+- **Heatmap hover tooltips** – GUI tooltips (upper-left corner) show per-cell values:
+  - TX Channels style-1 heatmap: TX Slot, TX Channel, Impedance
+  - RX Channels heatmap: RX Channel, RX Board, Impedance
+- **Out-of-spec text reports** – Automatic report files are written to the output directory for:
+  - TX channel elements outside spec limits
+  - RX array elements outside spec limits
+- **TX Channels GUI navigation** – GUI includes all three TX views (style 1, style 2, and TX history), with GUI-specific TX history formatting improvements
 
 ## Download
 
@@ -103,7 +113,7 @@ Support for other formats and features may require additional development. SIS 5
 
 ## Version
 
-Current version: **2026.4**
+Current version: **2026.6**
 
 ## Authors
 

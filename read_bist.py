@@ -840,8 +840,23 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
                     #                 cmap='rainbow', vmin=rx_rec_min, vmax=rx_rec_max)  # plot test rows and freq cols
                     # print('np.shape of zrx_test =', np.shape(zrx_test))
                     # im = ax1.imshow(zrx_test[:, 32 * f:32 * (f + 1)], cmap='rainbow', vmin=rx_rec_min, vmax=rx_rec_max)
-                    im = ax1.imshow(z['rx'][i][t][f], cmap='rainbow', vmin=rx_rec_min, vmax=rx_rec_max)
-                    cbar = fig.colorbar(im, orientation='horizontal', ax=ax1, fraction=cbar_fraction, pad=cbar_pad)
+                    rx_data = z['rx'][i][t][f]
+                    rx_cmap = plt.get_cmap('rainbow').copy()
+                    rx_cmap.set_under('black')
+                    rx_cmap.set_over('magenta')
+                    rx_data_min = np.nanmin(rx_data)
+                    rx_data_max = np.nanmax(rx_data)
+                    rx_extend = 'neither'
+                    if rx_data_min < rx_rec_min and rx_data_max > rx_rec_max:
+                        rx_extend = 'both'
+                    elif rx_data_min < rx_rec_min:
+                        rx_extend = 'min'
+                    elif rx_data_max > rx_rec_max:
+                        rx_extend = 'max'
+                    im = ax1.imshow(rx_data, cmap=rx_cmap, vmin=rx_rec_min, vmax=rx_rec_max)
+                    fig._bist_rx_channel_hover = (ax1, im, rx_data)
+                    cbar = fig.colorbar(im, orientation='horizontal', ax=ax1, fraction=cbar_fraction, pad=cbar_pad,
+                                        extend=rx_extend)
 
                     try:  # get the colorbar units (EM2040 is dB signal strength, not impedance)
                         print('trying to get colorbar label from:')
@@ -887,14 +902,29 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
                     ax1.yaxis.set_major_formatter(FormatStrFormatter('%g'))
 
                     if subplot_count == 2:  # plot transducer values if appropriate
+                        rx_array_extend = 'neither'
                         try:  # plot the rx TRANSDUCER z values; plot individual test data for EM71X
-                            im = ax2.imshow(z['rx_array'][i][t][f], cmap='rainbow', vmin=rx_xdcr_min, vmax=rx_xdcr_max)
+                            rx_array_data = z['rx_array'][i][t][f]
+                            rx_array_cmap = plt.get_cmap('rainbow').copy()
+                            rx_array_cmap.set_under('black')
+                            rx_array_cmap.set_over('magenta')
+                            rx_array_data_min = np.nanmin(rx_array_data)
+                            rx_array_data_max = np.nanmax(rx_array_data)
+                            rx_array_extend = 'neither'
+                            if rx_array_data_min < rx_xdcr_min and rx_array_data_max > rx_xdcr_max:
+                                rx_array_extend = 'both'
+                            elif rx_array_data_min < rx_xdcr_min:
+                                rx_array_extend = 'min'
+                            elif rx_array_data_max > rx_xdcr_max:
+                                rx_array_extend = 'max'
+                            im = ax2.imshow(rx_array_data, cmap=rx_array_cmap, vmin=rx_xdcr_min, vmax=rx_xdcr_max)
 
                         except:
                             print('zrx_array not available for plotting for this frequency range')
 
                         # im = ax2.imshow(zrx_array_temp, cmap='rainbow', vmin=rx_xdcr_min, vmax=rx_xdcr_max)
-                        cbar = fig.colorbar(im, orientation='horizontal', ax=ax2, fraction=cbar_fraction, pad=cbar_pad)
+                        cbar = fig.colorbar(im, orientation='horizontal', ax=ax2, fraction=cbar_fraction, pad=cbar_pad,
+                                            extend=rx_array_extend)
                         cbar.set_label(cbar_label)
 
                         # set ticks and labels
@@ -1570,6 +1600,112 @@ def get_tx_z_limits(model):
         return [60, 120]
 
 
+def write_tx_out_of_spec_report(z, output_dir=os.getcwd()):
+    """Write per-file TX out-of-spec reports with channel, slot, and impedance."""
+    report_files = []
+
+    for i in range(len(z['filename'])):
+        try:
+            fname_str = z['filename'][i]
+            fname_str = fname_str[fname_str.rfind("/") + 1:-4]
+
+            if z['tx_limits'][i]:
+                [zmin, zmax] = z['tx_limits'][i]
+            else:
+                [zmin, zmax] = get_tx_z_limits(z['model'][i])
+
+            tx_data = np.asanyarray(z['tx'][i], dtype=float)
+            out_of_spec = np.where((tx_data < zmin) | (tx_data > zmax))
+
+            report_name = 'TX_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_from_text_file_' + fname_str + '.txt'
+            report_path = os.path.join(output_dir, report_name)
+
+            with open(report_path, 'w', encoding='utf-8') as f:
+                f.write('TX Channels Out-of-Spec Report\n')
+                f.write('================================\n')
+                f.write('File: ' + fname_str + '.txt\n')
+                f.write('Model: EM' + str(z['model'][i]) + '\n')
+                f.write('Serial Number: ' + str(z['sn'][i]) + '\n')
+                f.write('Spec Range (ohms): ' + str(zmin) + ' to ' + str(zmax) + '\n\n')
+                f.write('TX Channel, TX Slot, Impedance (ohms)\n')
+                f.write('-------------------------------------\n')
+
+                if len(out_of_spec[0]) == 0:
+                    f.write('No out-of-spec TX elements found.\n')
+                else:
+                    for tx_channel, tx_slot in zip(out_of_spec[0], out_of_spec[1]):
+                        z_val = tx_data[tx_channel, tx_slot]
+                        if np.isnan(z_val):
+                            continue
+                        # TX slots in plots are 1-based; channels are 0-based
+                        f.write(f'{int(tx_channel)}, {int(tx_slot) + 1}, {float(z_val):.2f}\n')
+
+            report_files.append(report_name)
+
+        except Exception as e:
+            print('***WARNING: Error writing TX out-of-spec report for', z['filename'][i], '->', str(e))
+
+    return report_files
+
+
+def write_rx_array_out_of_spec_report(z, output_dir=os.getcwd()):
+    """Write per-file RX array out-of-spec reports with board, channel, and impedance."""
+    report_files = []
+
+    for i in range(len(z['filename'])):
+        try:
+            fname_str = z['filename'][i]
+            fname_str = fname_str[fname_str.rfind("/") + 1:-4]
+            report_name = 'RX_ARRAY_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_from_text_file_' + fname_str + '.txt'
+            report_path = os.path.join(output_dir, report_name)
+
+            rows = []
+            tests = sorted(z['rx_array'][i].keys())
+            for t in tests:
+                n_freq = len(z['freq_range'][i][t])
+                for f in range(n_freq):
+                    # Default transducer limits if parsing failed.
+                    rx_xdcr_min, rx_xdcr_max = 250, 1200
+                    try:
+                        rx_xdcr_min, rx_xdcr_max = z['rx_array_limits'][i][t][f]
+                    except Exception:
+                        pass
+
+                    rx_array_data = np.asanyarray(z['rx_array'][i][t][f], dtype=float)
+                    out_of_spec = np.where((rx_array_data < rx_xdcr_min) | (rx_array_data > rx_xdcr_max))
+                    if len(out_of_spec[0]) == 0:
+                        continue
+
+                    freq_label = str(z['freq_range'][i][t][f]).replace('.0', '')
+                    for rx_board, rx_channel in zip(out_of_spec[0], out_of_spec[1]):
+                        z_val = rx_array_data[rx_board, rx_channel]
+                        if np.isnan(z_val):
+                            continue
+                        rows.append((t, freq_label, int(rx_board), int(rx_channel), float(z_val), rx_xdcr_min, rx_xdcr_max))
+
+            with open(report_path, 'w', encoding='utf-8') as f:
+                f.write('RX Array Out-of-Spec Report\n')
+                f.write('============================\n')
+                f.write('File: ' + fname_str + '.txt\n')
+                f.write('Model: EM' + str(z['model'][i]) + '\n')
+                f.write('Serial Number: ' + str(z['sn'][i]) + '\n\n')
+                f.write('Test, Frequency (kHz), RX Board, RX Channel, Impedance (ohms), Spec Min, Spec Max\n')
+                f.write('-------------------------------------------------------------------------------\n')
+
+                if not rows:
+                    f.write('No out-of-spec RX array elements found.\n')
+                else:
+                    for t, freq_label, rx_board, rx_channel, z_val, rx_xdcr_min, rx_xdcr_max in rows:
+                        f.write(f'{t}, {freq_label}, {rx_board}, {rx_channel}, {z_val:.2f}, {rx_xdcr_min}, {rx_xdcr_max}\n')
+
+            report_files.append(report_name)
+
+        except Exception as e:
+            print('***WARNING: Error writing RX array out-of-spec report for', z['filename'][i], '->', str(e))
+
+    return report_files
+
+
 # plot TX Channels impedance from Z dict
 def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), return_fig=False, gui_mode=False):
     fig_list = []  # list of figure names successfully created
@@ -1616,8 +1752,21 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 plt.rcParams['xtick.top'] = plt.rcParams['xtick.labeltop'] = False
 
                 fig, ax = plt.subplots(nrows=1, ncols=1)  # create new figure
-                im = ax.imshow(z['tx'][i], cmap=grid_cmap, vmin=zmin, vmax=zmax)
-                cbar = fig.colorbar(im, orientation='vertical')
+                tx_data = z['tx'][i]
+                tx_cmap = plt.get_cmap(grid_cmap).copy()
+                tx_cmap.set_under('black')
+                tx_cmap.set_over('magenta')
+                tx_data_min = np.nanmin(tx_data)
+                tx_data_max = np.nanmax(tx_data)
+                tx_extend = 'neither'
+                if tx_data_min < zmin and tx_data_max > zmax:
+                    tx_extend = 'both'
+                elif tx_data_min < zmin:
+                    tx_extend = 'min'
+                elif tx_data_max > zmax:
+                    tx_extend = 'max'
+                im = ax.imshow(tx_data, cmap=tx_cmap, vmin=zmin, vmax=zmax)
+                cbar = fig.colorbar(im, orientation='vertical', extend=tx_extend)
                 cbar.set_label(r'Impedance ($\Omega$, f=' + str(z['frequency'][i][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
 
                 # set ticks and labels (following modified from stackoverflow)
@@ -1669,7 +1818,19 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
 
                 # bottom plot: grid plot
                 ax2 = plt.subplot(gs[1])
-                im = ax2.imshow(ztx, cmap=grid_cmap, vmin=zmin, vmax=zmax)
+                tx_cmap = plt.get_cmap(grid_cmap).copy()
+                tx_cmap.set_under('black')
+                tx_cmap.set_over('magenta')
+                tx_data_min = np.nanmin(ztx)
+                tx_data_max = np.nanmax(ztx)
+                tx_extend = 'neither'
+                if tx_data_min < zmin and tx_data_max > zmax:
+                    tx_extend = 'both'
+                elif tx_data_min < zmin:
+                    tx_extend = 'min'
+                elif tx_data_max > zmax:
+                    tx_extend = 'max'
+                im = ax2.imshow(ztx, cmap=tx_cmap, vmin=zmin, vmax=zmax)
                 ax2.set_aspect('equal')
                 plt.gca().invert_yaxis()  # invert y axis to match previous plots by Paul Johnson
 
@@ -1713,7 +1874,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 ax2.xaxis.set_label_position('top')
 
                 # add colorbar
-                cbar = fig.colorbar(im, orientation='horizontal', fraction=0.05, pad=0.05)
+                cbar = fig.colorbar(im, orientation='horizontal', fraction=0.05, pad=0.05, extend=tx_extend)
                 cbar.set_label(r'Impedance ($\Omega$, f=' + str(z['frequency'][i][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
 
 
@@ -1723,6 +1884,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 fig.tight_layout()
                 fig.subplots_adjust(top=0.87)
 
+            fig_name = None
             # save the figure
             if save_figs is True:
                 # fig = plt.gcf()
@@ -1742,7 +1904,8 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
             else:
                 plt.close()
 
-            fig_list.append(fig_name)
+            if fig_name is not None:
+                fig_list.append(fig_name)
 
         except ValueError:  # move on if error
             print("***WARNING: Error plotting ", z['filename'][i])
@@ -1750,7 +1913,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
     return fig_list
 
 
-def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd()):
+def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_mode=False):
     # plot lines of all zrx values colored by year to match historic Multibeam Advisory Committee plots
     fig_name = []
     # set x ticks and labels on bottom of subplots to match previous MAC figures
@@ -1786,7 +1949,14 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd()):
     print('len ztx_module = ', len(ztx_module))
 
     # set axis and label parameters
-    axfsize = 16  # axis font size
+    if gui_mode:
+        title_fontsize = 10
+        axfsize = 7
+        legend_fontsize = 7
+    else:
+        title_fontsize = 20
+        axfsize = 16
+        legend_fontsize = axfsize
     # dx_tick = 36
     # if n_tx_slots > 36:
     dx_tick = max([36, 36*np.floor(n_tx_slots/20)])  # try to reduce crowded labels for 0.5 deg systems w/ 40+ cards
@@ -1828,10 +1998,12 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd()):
 
     # make figure with two subplots
     fig = plt.figure()
-    # fig.set_size_inches(11, 16)  # previous MAC plots height/width ratio is 1.25
     ax1 = fig.add_subplot(1, 1, 1)
-    # ax2 = fig.add_subplot(2, 1, 2)
-    plt.subplots_adjust(top=0.85)  # try to keep long supertitle from overlapping
+    if gui_mode:
+        # Use tighter margins for GUI so plot fills available window space.
+        plt.subplots_adjust(left=0.08, right=0.98, bottom=0.10, top=0.86)
+    else:
+        plt.subplots_adjust(top=0.85)  # try to keep long supertitle from overlapping
 
     # make list of line artists, reset for each frequency
     legend_labels = []
@@ -1906,9 +2078,13 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd()):
     legend_labels.append('Last')
 
     # set legend
-    l1 = ax1.legend(legend_artists, legend_labels,
-                    bbox_to_anchor=(1.2, 1), borderaxespad=0,
-                    loc='upper right', fontsize=axfsize)
+    if gui_mode:
+        l1 = ax1.legend(legend_artists, legend_labels,
+                        loc='upper right', fontsize=legend_fontsize)
+    else:
+        l1 = ax1.legend(legend_artists, legend_labels,
+                        bbox_to_anchor=(1.2, 1), borderaxespad=0,
+                        loc='upper right', fontsize=legend_fontsize)
 
     if yrmin == yrmax:
         years_str = 'Year: ' + str(yrmin)
@@ -1920,8 +2096,11 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd()):
                 years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')\n' + \
                 'Frequency: ' + freq + ' kHz'
                 # 'Frequency: '+z['freq_range'][i][f]+' kHz'
-    t1 = fig.suptitle(title_str, fontsize=20)
-    fig.set_size_inches(16, 10)
+    t1 = fig.suptitle(title_str, fontsize=title_fontsize)
+    if gui_mode:
+        fig.set_size_inches(8, 6)
+    else:
+        fig.set_size_inches(16, 10)
 
     # save the figure
     if save_figs is True:
@@ -1934,6 +2113,9 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd()):
         # fig.savefig(fig_name, dpi=100)
         fig.savefig(os.path.join(output_dir, fig_name), dpi=100,
                     bbox_extra_artists=(t1, l1), bbox_inches='tight')  # add bbox extra artists to avoid cutoff
+
+    if return_fig:
+        return fig
 
     plt.close()
 
@@ -2341,6 +2523,154 @@ def attach_rx_noise_speed_hover(fig, canvas=None):
         return
     ax_im, im, rxn_all, param_all = payload
     _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, canvas=canvas)
+
+
+def _attach_tx_channel_hover_tooltip(fig, im, tx_data, canvas=None):
+    """Hover tooltip for TX heatmap showing slot, channel, and impedance."""
+    target_canvas = canvas if canvas is not None else fig.canvas
+    cid_old = getattr(fig, '_bist_tx_hover_cid', None)
+    canvas_old = getattr(fig, '_bist_tx_hover_canvas', None)
+    if cid_old is not None and canvas_old is not None:
+        try:
+            canvas_old.mpl_disconnect(cid_old)
+        except (ValueError, AttributeError):
+            pass
+        fig._bist_tx_hover_cid = None
+        fig._bist_tx_hover_canvas = None
+    ann_old = getattr(fig, '_bist_tx_tooltip_artist', None)
+    if ann_old is not None:
+        try:
+            ann_old.remove()
+        except (ValueError, AttributeError):
+            pass
+        fig._bist_tx_tooltip_artist = None
+
+    tooltip = fig.text(
+        0.015, 0.985, '',
+        transform=fig.transFigure,
+        ha='left',
+        va='top',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.95, edgecolor='gray'),
+        fontsize=9,
+        visible=False,
+        zorder=1000,
+    )
+    fig._bist_tx_tooltip_artist = tooltip
+    tx_arr = np.asanyarray(tx_data)
+
+    def on_hover(event):
+        if event.canvas is not target_canvas:
+            return
+        if im.get_cursor_data(event) is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                target_canvas.draw_idle()
+            return
+        idx = _imshow_cursor_row_col(im, event)
+        if idx is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                target_canvas.draw_idle()
+            return
+        row_i, col_j = idx
+        z_val = tx_arr[row_i, col_j]
+        if np.ma.is_masked(z_val) or np.isnan(z_val):
+            z_str = 'N/A'
+        else:
+            z_str = f'{float(z_val):.2f} ohms'
+        tooltip.set_text(
+            f'TX Slot: {col_j + 1}\n'
+            f'TX Channel: {row_i}\n'
+            f'Impedance: {z_str}'
+        )
+        tooltip.set_visible(True)
+        target_canvas.draw_idle()
+
+    fig._bist_tx_hover_cid = target_canvas.mpl_connect('motion_notify_event', on_hover)
+    fig._bist_tx_hover_canvas = target_canvas
+
+
+def attach_tx_channel_hover(fig, canvas=None):
+    """Connect TX channel hover tooltip using data stored on *fig*."""
+    payload = getattr(fig, '_bist_tx_hover', None)
+    if payload is None:
+        return
+    _ax_im, im, tx_data = payload
+    _attach_tx_channel_hover_tooltip(fig, im, tx_data, canvas=canvas)
+
+
+def _attach_rx_channel_hover_tooltip(fig, im, rx_data, canvas=None):
+    """Hover tooltip for RX channels heatmap showing board, channel, and impedance."""
+    target_canvas = canvas if canvas is not None else fig.canvas
+    cid_old = getattr(fig, '_bist_rx_channel_hover_cid', None)
+    canvas_old = getattr(fig, '_bist_rx_channel_hover_canvas', None)
+    if cid_old is not None and canvas_old is not None:
+        try:
+            canvas_old.mpl_disconnect(cid_old)
+        except (ValueError, AttributeError):
+            pass
+        fig._bist_rx_channel_hover_cid = None
+        fig._bist_rx_channel_hover_canvas = None
+    ann_old = getattr(fig, '_bist_rx_channel_tooltip_artist', None)
+    if ann_old is not None:
+        try:
+            ann_old.remove()
+        except (ValueError, AttributeError):
+            pass
+        fig._bist_rx_channel_tooltip_artist = None
+
+    tooltip = fig.text(
+        0.015, 0.985, '',
+        transform=fig.transFigure,
+        ha='left',
+        va='top',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.95, edgecolor='gray'),
+        fontsize=9,
+        visible=False,
+        zorder=1000,
+    )
+    fig._bist_rx_channel_tooltip_artist = tooltip
+    rx_arr = np.asanyarray(rx_data)
+
+    def on_hover(event):
+        if event.canvas is not target_canvas:
+            return
+        if im.get_cursor_data(event) is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                target_canvas.draw_idle()
+            return
+        idx = _imshow_cursor_row_col(im, event)
+        if idx is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                target_canvas.draw_idle()
+            return
+        row_i, col_j = idx
+        z_val = rx_arr[row_i, col_j]
+        if np.ma.is_masked(z_val) or np.isnan(z_val):
+            z_str = 'N/A'
+        else:
+            z_str = f'{float(z_val):.2f} ohms'
+        tooltip.set_text(
+            f'RX Channel: {col_j}\n'
+            f'RX Board: {row_i}\n'
+            f'Impedance: {z_str}'
+        )
+        tooltip.set_visible(True)
+        target_canvas.draw_idle()
+
+    fig._bist_rx_channel_hover_cid = target_canvas.mpl_connect('motion_notify_event', on_hover)
+    fig._bist_rx_channel_hover_canvas = target_canvas
+
+
+def attach_rx_channel_hover(fig, canvas=None):
+    """Connect RX channel hover tooltip using data stored on *fig*."""
+    payload = getattr(fig, '_bist_rx_channel_hover', None)
+    if payload is None:
+        return
+    _ax_im, im, rx_data = payload
+    _attach_rx_channel_hover_tooltip(fig, im, rx_data, canvas=canvas)
 
 
 # plot RX Noise versus speed or azimuth

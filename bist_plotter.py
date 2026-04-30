@@ -869,80 +869,10 @@ class MainWindow(QtWidgets.QMainWindow):
         session_gb.setMaximumHeight(100)  # Height for session buttons
         left_column.addWidget(session_gb)
         
-        # Add logos between Sources and Activity Log
-        print("Debug: Creating logos section...")
-        
-        # Debug: Test path calculation
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(os.path.dirname(current_dir))
-        test_media_path = os.path.join(project_root, "media")
-        print(f"Debug: Current dir: {current_dir}")
-        print(f"Debug: Project root: {project_root}")
-        print(f"Debug: Test media path: {test_media_path}")
-        print(f"Debug: Media dir exists: {os.path.exists(test_media_path)}")
-        
-        logos_layout = QtWidgets.QHBoxLayout()
-        
-        # CCOM logo
-        ccom_label = QtWidgets.QLabel()
-        ccom_path = self.get_resource_path("media/CCOM.png")
-        print(f"Debug: CCOM logo path: {ccom_path}")
-        print(f"Debug: File exists: {os.path.exists(ccom_path)}")
-        ccom_pixmap = QtGui.QPixmap(ccom_path)
-        if ccom_pixmap.isNull():
-            print(f"Warning: Could not load CCOM logo from {ccom_path}")
-            # Set a placeholder text if logo fails to load
-            ccom_label.setText("CCOM")
-            ccom_label.setStyleSheet("border: 2px solid red; background-color: lightgray; padding: 10px;")
-        else:
-            print(f"Debug: CCOM logo loaded successfully, size: {ccom_pixmap.width()}x{ccom_pixmap.height()}")
-            ccom_pixmap_scaled = ccom_pixmap.scaled(70, 70, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            ccom_label.setPixmap(ccom_pixmap_scaled)
-            print(f"Debug: CCOM logo scaled to: {ccom_pixmap_scaled.width()}x{ccom_pixmap_scaled.height()}")
-            print(f"Debug: CCOM label pixmap is null: {ccom_label.pixmap().isNull()}")
-        ccom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ccom_label.setFixedSize(70, 70)
-        ccom_label.setScaledContents(True)  # Ensure the logo scales to fill the label
-        logos_layout.addWidget(ccom_label)
-        
-        # Add some spacing between logos
-        logos_layout.addSpacing(10)
-        
-        # MAC logo
-        mac_label = QtWidgets.QLabel()
-        mac_path = self.get_resource_path("media/mac.png")
-        print(f"Debug: MAC logo path: {mac_path}")
-        print(f"Debug: File exists: {os.path.exists(mac_path)}")
-        mac_pixmap = QtGui.QPixmap(mac_path)
-        if mac_pixmap.isNull():
-            print(f"Warning: Could not load MAC logo from {mac_path}")
-            # Set a placeholder text if logo fails to load
-            mac_label.setText("MAC")
-            mac_label.setStyleSheet("border: 2px solid red; background-color: lightgray; padding: 10px;")
-        else:
-            print(f"Debug: MAC logo loaded successfully, size: {mac_pixmap.width()}x{mac_pixmap.height()}")
-            mac_pixmap_scaled = mac_pixmap.scaled(70, 70, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            mac_label.setPixmap(mac_pixmap_scaled)
-            print(f"Debug: MAC logo scaled to: {mac_pixmap_scaled.width()}x{mac_pixmap_scaled.height()}")
-            print(f"Debug: MAC label pixmap is null: {mac_label.pixmap().isNull()}")
-        mac_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mac_label.setFixedSize(70, 70)
-        mac_label.setScaledContents(True)  # Ensure the logo scales to fill the label
-        logos_layout.addWidget(mac_label)
-        
         # Add Activity Log first - same width with fixed height
         self.log_gb.setFixedWidth(315)  # Match Files section width exactly (increased by 35px)
         self.log_gb.setMaximumHeight(200)  # Increased Activity Log height
         left_column.addWidget(self.log_gb)
-        
-        # Create container widget for logos
-        logos_container_widget = QtWidgets.QWidget()
-        logos_container_widget.setLayout(logos_layout)
-        logos_container_widget.setFixedWidth(315)
-        logos_container_widget.setFixedHeight(79)  # Exact height for 70px logos + 9px padding
-        logos_container_widget.setStyleSheet("padding: 4.5px;")  # Reduced padding to fit 79px height
-        
-        left_column.addWidget(logos_container_widget)
         
         # Set minimum width for left column
         left_widget = QtWidgets.QWidget()
@@ -2312,6 +2242,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log('Plotting ' + str(bist_count) + ' ' + self.type_cbox.currentText() + ' BIST files...')
 
             if bist_test_type == self.bist_list[1]:  # TX Channels
+                # Write TX out-of-spec report(s)
+                tx_oos_reports = read_bist.write_tx_out_of_spec_report(bist, output_dir=self.output_dir)
+                if tx_oos_reports:
+                    self.update_log(f"Wrote {len(tx_oos_reports)} TX out-of-spec report(s) in {self.output_dir}")
+
                 # Initialize navigation for TX channel plots
                 self.all_figures = []
                 self.frequency_data = []
@@ -2347,6 +2282,30 @@ class MainWindow(QtWidgets.QMainWindow):
                         except Exception as e:
                             self.update_log(f"Error generating TX channel plot for file {i}, style {ps}: {str(e)}")
                             continue
+
+                # Add TX history plot to GUI navigation as the third TX plot type
+                try:
+                    history_plot_data = {
+                        'bist': bist,
+                        'plot_type': 'tx_channels',
+                        'plot_subtype': 'history'
+                    }
+                    self.frequency_data.append(history_plot_data)
+                    tx_history_figure = read_bist.plot_tx_z_history(
+                        bist,
+                        save_figs=False,
+                        output_dir=self.output_dir,
+                        return_fig=True,
+                        gui_mode=True
+                    )
+                    if tx_history_figure:
+                        self.all_figures.append(tx_history_figure)
+                        self.total_charts += 1
+                        model = bist['model'][0] if bist['model'] else "Unknown"
+                        sn = bist['sn'][0] if bist['sn'] else "Unknown"
+                        self.freq_list.append(f"TX Channels History - EM{model} SN {sn}")
+                except Exception as e:
+                    self.update_log(f"Error generating TX history plot: {str(e)}")
                 
                 # Display the first TX channel plot in GUI
                 if self.all_figures:
@@ -2369,6 +2328,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log('No TX Z history plot saved (check log for missing date/time warnings)')
 
             elif bist_test_type == self.bist_list[2]:  # RX Channels
+                # Write RX array out-of-spec report(s)
+                rx_array_oos_reports = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=self.output_dir)
+                if rx_array_oos_reports:
+                    self.update_log(f"Wrote {len(rx_array_oos_reports)} RX array out-of-spec report(s) in {self.output_dir}")
+
                 # Initialize navigation for RX channel plots
                 self.all_figures = []
                 self.frequency_data = []
@@ -3332,6 +3296,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.update_log(f"Warning: Could not update canvas: {e}")
             
             read_bist.attach_rx_noise_speed_hover(self.plot_figure, self.plot_figure_canvas)
+            read_bist.attach_rx_channel_hover(self.plot_figure, self.plot_figure_canvas)
+            read_bist.attach_tx_channel_hover(self.plot_figure, self.plot_figure_canvas)
             self.update_log(f"Plot displayed in GUI window successfully")
             
         except Exception as e:
@@ -3515,11 +3481,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 
                 if plot_type == 'tx_channels':
                     # Handle TX channel plots
-                    figure = self.generate_tx_channel_plot(plot_data['bist'], 
-                                                          file_index=plot_data['file_index'],
-                                                          plot_style=plot_data['plot_style'],
-                                                          save_figs=False,  # GUI display only
-                                                          output_dir=self.output_dir)
+                    if plot_data.get('plot_subtype') == 'history':
+                        figure = read_bist.plot_tx_z_history(plot_data['bist'],
+                                                             save_figs=False,
+                                                             output_dir=self.output_dir,
+                                                             return_fig=True,
+                                                             gui_mode=True)
+                    else:
+                        figure = self.generate_tx_channel_plot(plot_data['bist'], 
+                                                              file_index=plot_data['file_index'],
+                                                              plot_style=plot_data['plot_style'],
+                                                              save_figs=False,  # GUI display only
+                                                              output_dir=self.output_dir)
                 elif plot_type == 'rx_channels':
                     # Handle RX channel plots
                     if 'figure_index' in plot_data:
@@ -3651,6 +3624,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plot_figure_canvas.flush_events()
                 QtWidgets.QApplication.processEvents()
                 read_bist.attach_rx_noise_speed_hover(figure, self.plot_figure_canvas)
+                read_bist.attach_rx_channel_hover(figure, self.plot_figure_canvas)
+                read_bist.attach_tx_channel_hover(figure, self.plot_figure_canvas)
                 
                 self.update_log(f"Displayed chart {self.current_chart_index + 1} of {self.total_charts}")
                 
@@ -3690,8 +3665,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 plt.rcParams['xtick.top'] = plt.rcParams['xtick.labeltop'] = False
 
                 fig, ax = plt.subplots(nrows=1, ncols=1)  # create new figure
-                im = ax.imshow(bist['tx'][file_index], cmap=grid_cmap, vmin=zmin, vmax=zmax)
-                cbar = fig.colorbar(im, orientation='vertical')
+                tx_data = bist['tx'][file_index]
+                tx_cmap = plt.get_cmap(grid_cmap).copy()
+                tx_cmap.set_under('black')
+                tx_cmap.set_over('magenta')
+                tx_data_min = np.nanmin(tx_data)
+                tx_data_max = np.nanmax(tx_data)
+                tx_extend = 'neither'
+                if tx_data_min < zmin and tx_data_max > zmax:
+                    tx_extend = 'both'
+                elif tx_data_min < zmin:
+                    tx_extend = 'min'
+                elif tx_data_max > zmax:
+                    tx_extend = 'max'
+                im = ax.imshow(tx_data, cmap=tx_cmap, vmin=zmin, vmax=zmax)
+                fig._bist_tx_hover = (ax, im, tx_data)
+                cbar = fig.colorbar(im, orientation='vertical', extend=tx_extend)
                 cbar.set_label(r'Impedance ($\Omega$, f=' + str(bist['frequency'][file_index][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
 
                 # Set ticks and labels
@@ -3737,7 +3726,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 # Bottom plot: grid plot
                 ax2 = plt.subplot(gs[1])
-                im = ax2.imshow(ztx, cmap=grid_cmap, vmin=zmin, vmax=zmax)
+                tx_cmap = plt.get_cmap(grid_cmap).copy()
+                tx_cmap.set_under('black')
+                tx_cmap.set_over('magenta')
+                tx_data_min = np.nanmin(ztx)
+                tx_data_max = np.nanmax(ztx)
+                tx_extend = 'neither'
+                if tx_data_min < zmin and tx_data_max > zmax:
+                    tx_extend = 'both'
+                elif tx_data_min < zmin:
+                    tx_extend = 'min'
+                elif tx_data_max > zmax:
+                    tx_extend = 'max'
+                im = ax2.imshow(ztx, cmap=tx_cmap, vmin=zmin, vmax=zmax)
                 ax2.set_aspect('equal')
                 plt.gca().invert_yaxis()
 
@@ -3777,7 +3778,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ax2.xaxis.set_label_position('top')
 
                 # Add colorbar
-                cbar = fig.colorbar(im, orientation='horizontal', fraction=0.05, pad=0.05)
+                cbar = fig.colorbar(im, orientation='horizontal', fraction=0.05, pad=0.05, extend=tx_extend)
                 cbar.set_label(r'Impedance ($\Omega$, f=' + str(bist['frequency'][file_index][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
 
                 # Set the super title
