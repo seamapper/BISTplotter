@@ -816,7 +816,7 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
 
                     try:  # get receiver plot color limits from parsed receiver Z limits
                         print('z rx_limits[i][t][f]=', z['rx_limits'][i][t][f])
-                        rx_rec_min, rx_rec_max = z['rx_limits'][i][t][f]
+                        rx_rec_min, rx_rec_max = _pair_limits(z['rx_limits'][i][t][f])
                         print('assigned rx_rec_min and max = ', rx_rec_min, rx_rec_max)
 
                     except:
@@ -825,7 +825,7 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
                     if subplot_count == 2:  # try to get transducer impedance color limits if present
                         try:  # get array plot color limits from parsed array Z limits
                             print('z rx_array_limits[i][t][f] =', z['rx_array_limits'][i][t][f])
-                            rx_xdcr_min, rx_xdcr_max = z['rx_array_limits'][i][t][f]
+                            rx_xdcr_min, rx_xdcr_max = _pair_limits(z['rx_array_limits'][i][t][f])
                             print('assigned rx_xdcr_min and max = ', rx_xdcr_min, rx_xdcr_max)
 
                         except:
@@ -1139,7 +1139,7 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
                         # get limits parsed for this BIST
                         # zrx_limits = z['rx_limits'][i]
                         # zrx_array_limits = z['rx_array_limits'][i]
-                        zrx_limits = z['rx_limits'][i][t][f]
+                        zrx_limits = _pair_limits(z['rx_limits'][i][t][f])
                         print('got zrx_limits = ', zrx_limits)
 
                         print('*** trying to get zrx_units for i, t, f = ', i, t, f)
@@ -1149,22 +1149,20 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
 
                         # print('trying to get rx_array_limits from ', z['rx_array_limits'])
                         try:
-                            zrx_array_limits = z['rx_array_limits'][i][t][f]
+                            zrx_array_limits = _pair_limits(z['rx_array_limits'][i][t][f])
                         except:
                             zrx_array_limits = [0, 1]
 
                         # default dy_tick of 50 (for non-EM2040) may be too large for some systems with tighter limits
-                        if np.diff(zrx_limits) < dy_tick:
-                            # dy_tick_local = 10
-                            dy_tick_local = [10, 1][int(np.diff(zrx_limits) < 10)]
-
+                        zrx_span = zrx_limits[1] - zrx_limits[0]
+                        if zrx_span < dy_tick:
+                            dy_tick_local = [10, 1][int(zrx_span < 10)]
                         else:
                             dy_tick_local = dy_tick
 
-                        if np.diff(zrx_array_limits) < dy_tick_array:
-                            # dy_tick_array_local = 10
-                            dy_tick_array_local = [10, 1][int(np.diff(zrx_array_limits) < 10)]
-
+                        zrx_array_span = zrx_array_limits[1] - zrx_array_limits[0]
+                        if zrx_array_span < dy_tick_array:
+                            dy_tick_array_local = [10, 1][int(zrx_array_span < 10)]
                         else:
                             dy_tick_array_local = dy_tick_array
 
@@ -1385,7 +1383,8 @@ def parse_tx_z(fname, sis_version=int(4), cbox_model_num=[]):
 
             # if any(substr in data[i] for substr in header_str):  # find any TX Z header strings preceding ch. data
             # find any TX Z header strings preceding ch. data, but do not confuse with 'TX channels failed' string
-            if any(substr in data[i] for substr in header_str) and data[i].find('failed') == -1:
+            if (any(substr in data[i] for substr in header_str) and data[i].find('failed') == -1
+                    and data[i].find('Phase limits') == -1):
 
                 # if data[i].find('Phase') > -1:
                 #     continue
@@ -1459,8 +1458,10 @@ def parse_tx_z(fname, sis_version=int(4), cbox_model_num=[]):
                         print('Found phase header on line ', i+1, '---> setting found_phase_header True')
                         break
 
-                    if sis_version == 5 and len(data[i].split()) > 0:  # SIS 5 format includes row of slot/board numbers
-                        slot_num = len(data[i].split())  # slot_num is slot count in row for SIS 5; slot ID for SIS 4
+                    if sis_version == 5:
+                        slot_count = _sis5_slot_count_from_line(data[i])
+                        if slot_count is not None:
+                            slot_num = slot_count  # slot index header row only (not Frequency, etc.)
                         rack_num = 9999  # placeholder for print statements for SIS 5, parsed for SIS 4
                     i += 1
 
@@ -1600,6 +1601,58 @@ def get_tx_z_limits(model):
         return [60, 120]
 
 
+def _pair_limits(limits):
+    """Return [min, max] from parsed limits that may be nested (e.g. [[80, 120]])."""
+    vals = np.asarray(limits, dtype=float).ravel()
+    if vals.size < 2:
+        raise ValueError(f'Need two limit values, got {limits!r}')
+    return [float(vals[0]), float(vals[1])]
+
+
+def _sis5_slot_count_from_line(line):
+    """Return slot count from a SIS5 slot-index header row (e.g. '1 2 3 ... 10')."""
+    tokens = line.split()
+    if len(tokens) < 2:
+        return None
+    try:
+        [int(float(t)) for t in tokens]
+    except ValueError:
+        return None
+    return len(tokens)
+
+
+def _tx_slot_axis_ticks(n_tx_slots, tick_step):
+    """Return 0-based tick positions and 1-based TX slot labels at a fixed step (e.g. 1, 5, 9, 13)."""
+    if n_tx_slots <= 0:
+        return [], []
+    tick_step = max(1, int(tick_step))
+    labels = list(np.arange(1, n_tx_slots + 1, tick_step))
+    positions = [lbl - 1 for lbl in labels]
+    return positions, labels
+
+
+def _center_axes_block_in_figure(fig, top_margin=0.88):
+    """Horizontally center the heatmap and colorbar as a group under a full-width suptitle."""
+    fig.canvas.draw()
+    image_axes = [a for a in fig.axes if a.images]
+    if not image_axes:
+        return
+    ax = image_axes[0]
+    group_axes = [ax] + [a for a in fig.axes if a is not ax]
+    x0 = min(a.get_position().x0 for a in group_axes)
+    x1 = max(a.get_position().x1 for a in group_axes)
+    shift = 0.5 - (x0 + x1) / 2
+    if abs(shift) < 0.005:
+        if top_margin is not None:
+            fig.subplots_adjust(top=top_margin)
+        return
+    for a in group_axes:
+        pos = a.get_position()
+        a.set_position([pos.x0 + shift, pos.y0, pos.width, pos.height])
+    if top_margin is not None:
+        fig.subplots_adjust(top=top_margin)
+
+
 def write_tx_out_of_spec_report(z, output_dir=os.getcwd()):
     """Write per-file TX out-of-spec reports with channel, slot, and impedance."""
     report_files = []
@@ -1667,7 +1720,7 @@ def write_rx_array_out_of_spec_report(z, output_dir=os.getcwd()):
                     # Default transducer limits if parsing failed.
                     rx_xdcr_min, rx_xdcr_max = 250, 1200
                     try:
-                        rx_xdcr_min, rx_xdcr_max = z['rx_array_limits'][i][t][f]
+                        rx_xdcr_min, rx_xdcr_max = _pair_limits(z['rx_array_limits'][i][t][f])
                     except Exception:
                         pass
 
@@ -1774,15 +1827,11 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 # dx_tick = 4
                 dx_tick = [2, 4][n_tx_slots >= 12]  # x tick = 2 if <12 slots (e.g., 2022 AUS Antarctic EM712 w/ SIS 4)
                 ax.set_yticks(np.arange(0, n_tx_chans + dy_tick - 1, dy_tick))  # set major axes ticks
-                # ax.set_xticks(np.concatenate((np.array([0]),
-                #                               np.arange(3, n_tx_slots + dx_tick - 1, dx_tick))))
-                ax.set_xticks(np.concatenate((np.array([0]),
-                                              np.arange(dx_tick-1, n_tx_slots + dx_tick - 1, dx_tick))))
-
+                x_slot_pos, x_slot_lbl = _tx_slot_axis_ticks(n_tx_slots, dx_tick)
+                ax.set_xticks(x_slot_pos)
                 ax.set_yticklabels(np.arange(0, 40, 5), fontsize=tick_fontsize)  # set major axes labels
-                # ax.set_xticklabels(np.concatenate((np.array([1]), np.arange(4, n_tx_slots+4, 4))), fontsize=16)
-                ax.set_xticklabels(np.concatenate((np.array([1]), np.arange(dx_tick, n_tx_slots+dx_tick, dx_tick))),
-                                   fontsize=tick_fontsize)
+                ax.set_xticklabels(x_slot_lbl, fontsize=tick_fontsize)
+                ax.set_xlim(-0.5, n_tx_slots - 0.5)
 
                 ax.set_yticks(np.arange(-0.5, (n_tx_chans + 0.5), 1), minor=True)  # set minor axes for gridlines
                 ax.set_xticks(np.arange(-0.5, (n_tx_slots + 0.5), 1), minor=True)
@@ -1794,6 +1843,10 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 title_str = 'TX Channels BIST\n' + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n' + fname_str
                 t1 = fig.suptitle(title_str, fontsize=suptitle_fontsize)
                 fig.set_size_inches(10, 12)
+                if gui_mode:
+                    _center_axes_block_in_figure(fig, top_margin=0.88)
+                else:
+                    fig.subplots_adjust(top=0.88)
 
             elif plot_style == 2:  # two subplots, line plot on top, grid plot on bottom, matches MAC reports
                 # set x ticks and labels on top of subplots to match previous MAC figures
@@ -1843,8 +1896,8 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 ax1.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
                 ax1.set_yticks(np.arange(zmin, zmax+1, 10))
                 ax2.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
-                # ax2.set_yticks(np.concatenate((np.array([0]), np.arange(3, n_tx_slots + dy_tick - 1, dy_tick))))
-                ax2.set_yticks(np.concatenate((np.array([0]), np.arange(dy_tick-1, n_tx_slots + dy_tick - 1, dy_tick))))
+                y_slot_pos, y_slot_lbl = _tx_slot_axis_ticks(n_tx_slots, dy_tick)
+                ax2.set_yticks(y_slot_pos)
 
                 # set minor axes ticks for gridlines
                 ax1.set_xticks(np.arange(0, (n_tx_chans+1), 5), minor=True)
@@ -1858,8 +1911,8 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 ax2.set_xticklabels(np.arange(0, 40, 5), fontsize=axfsize)
                 # ax2.set_yticklabels(np.concatenate((np.array([1]), np.arange(4, 28, 4))), fontsize=axfsize)  # TX slot
                 # ax2.set_yticklabels(np.concatenate((np.array([1]), np.arange(4, n_tx_slots+4, 4))), fontsize=axfsize)  # TX slot
-                ax2.set_yticklabels(np.concatenate((np.array([1]), np.arange(dy_tick, n_tx_slots+dy_tick, dy_tick))),
-                                    fontsize=axfsize)  # TX slot
+                ax2.set_yticklabels(y_slot_lbl, fontsize=axfsize)  # TX slot
+                ax2.set_ylim(n_tx_slots - 0.5, -0.5)  # keep slot axis aligned with heatmap after invert_yaxis
 
                 # set grid on minor axes
                 ax1.grid(which='minor', color='k', linewidth=1)  # set minor gridlines

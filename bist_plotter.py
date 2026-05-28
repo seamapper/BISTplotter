@@ -3617,7 +3617,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log(f"Applied standard scaling: {original_size} -> (8, {new_height:.1f})")
                 
                 self.plot_figure.set_size_inches(8, new_height)
-                self.plot_figure.tight_layout()  # Adjust layout to fit the new size
+                self.plot_figure.tight_layout(rect=[0, 0, 1, 0.92])  # Adjust layout to fit the new size
+                if plot_type == 'tx_channels':
+                    read_bist._center_axes_block_in_figure(self.plot_figure, top_margin=0.88)
                 
                 # Force a redraw of the canvas
                 self.plot_figure_canvas.draw()
@@ -3687,12 +3689,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 dy_tick = 5
                 dx_tick = [2, 4][n_tx_slots >= 12]  # x tick = 2 if <12 slots
                 ax.set_yticks(np.arange(0, n_tx_chans + dy_tick - 1, dy_tick))
-                ax.set_xticks(np.concatenate((np.array([0]),
-                                              np.arange(dx_tick-1, n_tx_slots + dx_tick - 1, dx_tick))))
-
+                x_slot_pos, x_slot_lbl = read_bist._tx_slot_axis_ticks(n_tx_slots, dx_tick)
+                ax.set_xticks(x_slot_pos)
                 ax.set_yticklabels(np.arange(0, 40, 5), fontsize=tick_fontsize)
-                ax.set_xticklabels(np.concatenate((np.array([1]), np.arange(dx_tick, n_tx_slots+dx_tick, dx_tick))),
-                                   fontsize=tick_fontsize)
+                ax.set_xticklabels(x_slot_lbl, fontsize=tick_fontsize)
+                ax.set_xlim(-0.5, n_tx_slots - 0.5)
 
                 ax.set_yticks(np.arange(-0.5, (n_tx_chans + 0.5), 1), minor=True)
                 ax.set_xticks(np.arange(-0.5, (n_tx_slots + 0.5), 1), minor=True)
@@ -3704,6 +3705,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 title_str = 'TX Channels BIST\n' + 'EM' + bist['model'][file_index] + ' (S/N ' + bist['sn'][file_index] + ')\n' + fname_str
                 fig.suptitle(title_str, fontsize=title_fontsize)
                 fig.set_size_inches(10, 12)
+                read_bist._center_axes_block_in_figure(fig, top_margin=0.88)
 
             elif plot_style == 2:  # two subplots, line plot on top, grid plot on bottom
                 # Set x ticks and labels on top of subplots
@@ -3750,7 +3752,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 ax1.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
                 ax1.set_yticks(np.arange(zmin, zmax+1, 10))
                 ax2.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
-                ax2.set_yticks(np.concatenate((np.array([0]), np.arange(dy_tick-1, n_tx_slots + dy_tick - 1, dy_tick))))
+                y_slot_pos, y_slot_lbl = read_bist._tx_slot_axis_ticks(n_tx_slots, dy_tick)
+                ax2.set_yticks(y_slot_pos)
 
                 # Set minor axes ticks for gridlines
                 ax1.set_xticks(np.arange(0, (n_tx_chans+1), 5), minor=True)
@@ -3762,8 +3765,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 ax1.set_xticklabels(np.arange(0, 40, 5), fontsize=axfsize)
                 ax1.set_yticklabels(np.arange(zmin, zmax+1, 10), fontsize=axfsize)
                 ax2.set_xticklabels(np.arange(0, 40, 5), fontsize=axfsize)
-                ax2.set_yticklabels(np.concatenate((np.array([1]), np.arange(dy_tick, n_tx_slots+dy_tick, dy_tick))),
-                                    fontsize=axfsize)
+                ax2.set_yticklabels(y_slot_lbl, fontsize=axfsize)
+                ax2.set_ylim(n_tx_slots - 0.5, -0.5)
 
                 # Set grid on minor axes
                 ax1.grid(which='minor', color='k', linewidth=1)
