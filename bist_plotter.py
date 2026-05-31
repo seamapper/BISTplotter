@@ -222,7 +222,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(
             'UNH/CCOM-JHC & MAC - BIST Plotter v.%s - kjerram@ccom.unh.edu & pjohnson@ccom.unh.edu' % __version__
         )
-        self.setWindowIcon(QtGui.QIcon(os.path.join(self.media_path, "icon.png")))
+        self.setWindowIcon(QtGui.QIcon(os.path.join(self.media_path, "bist.ico")))
 
         if os.name == 'nt':  # necessary to explicitly set taskbar icon
             import ctypes
@@ -279,9 +279,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_right_layout()
         self.set_main_layout()
 
-        # Set initial state for open folder checkbox (after all UI elements are created)
-        self.update_open_folder_state()
-
         # enable initial tab/input states and custom speed list
         self.update_buttons()
         self.update_param_info()
@@ -291,11 +288,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # set up file control actions
         self.add_file_btn.clicked.connect(lambda: self.add_files('Kongsberg BIST .txt(*.txt)'))
         self.get_indir_btn.clicked.connect(self.get_input_dir)
-        self.get_outdir_btn.clicked.connect(self.get_output_dir)
+        self.export_plots_btn.clicked.connect(self.export_plots)
         self.rmv_file_btn.clicked.connect(self.remove_bist_files)
         self.clr_file_btn.clicked.connect(lambda: self.remove_bist_files(clear_all=True))
         self.show_path_chk.stateChanged.connect(self.show_file_paths)
-        self.export_plots_chk.stateChanged.connect(self.update_open_folder_state)
 
         # set up BIST selection and plotting actions
         self.select_type_btn.clicked.connect(self.select_bist)
@@ -421,28 +417,32 @@ class MainWindow(QtWidgets.QMainWindow):
                                         'Add a directory with BIST .txt files')
         self.include_subdir_chk = CheckBox('Include subdirectories', True, 'include_subdir_chk',
                                            'Include subdirectories when adding a directory')
-        self.get_outdir_btn = PushButton('Select Output Dir', btnw, btnh, 'get_outdir',
-                                         'Select the output directory (see current output directory below)')
         self.rmv_file_btn = PushButton('Remove Selected', btnw, btnh, 'rmv_files', 'Remove selected files')
         self.clr_file_btn = PushButton('Remove All Files', btnw, btnh, 'clr_file_btn', 'Remove all files')
         self.show_path_chk = CheckBox('Show file paths', False, 'show_paths_chk', 'Show paths in file list')
-        self.open_outdir_chk = CheckBox('Open folder after plotting', False, 'open_outdir_chk',
-                                        'Open the output directory after plotting')
-        self.export_plots_chk = CheckBox('Export Plots', True, 'export_plots_chk',
-                                         'Export plots to PNG files in the output directory')
+        self.export_plots_btn = PushButton('Export Plot', btnw, btnh, 'export_plots_btn',
+                                           'Save plot PNG files and out-of-spec reports from the last plot run')
+        self.export_plots_btn.setEnabled(False)
+        self._export_btn_style_default = ''
+        self._export_btn_style_pending = (
+            'QPushButton { color: #FF8C00; font-weight: bold; }'
+        )
+        self._export_pending = False
+        self.last_plotted_bist = None
+        self.last_bist_test_type = None
 
         # Create horizontal layout for Add Files and Add Directory buttons
-        add_files_dir_layout = BoxLayout([self.add_file_btn, self.get_indir_btn], 'h')
+        add_files_dir_layout = BoxLayout([self.add_file_btn, self.get_indir_btn], 'h', equal_width=True)
         
         # Create horizontal layout for Remove Selected and Remove All Files buttons
-        remove_files_layout = BoxLayout([self.rmv_file_btn, self.clr_file_btn], 'h')
+        remove_files_layout = BoxLayout([self.rmv_file_btn, self.clr_file_btn], 'h', equal_width=True)
         
-        # Create horizontal layout for checkboxes
+        # Checkboxes keep natural size; equal_width is for push buttons only
         checkboxes_layout = BoxLayout([self.include_subdir_chk, self.show_path_chk], 'h')
         
-        # set the file control button layout
-        file_btn_layout = BoxLayout([add_files_dir_layout,
-                                     remove_files_layout, checkboxes_layout], 'v')
+        # set the file control button layout (placed under file list in Sources groupbox)
+        self.file_btn_layout = BoxLayout([add_files_dir_layout,
+                                          remove_files_layout, checkboxes_layout], 'v')
 
         # set the BIST selection buttons
         lblw = 60
@@ -457,7 +457,9 @@ class MainWindow(QtWidgets.QMainWindow):
         noise_test_type_lbl = Label('Plot noise:', lblw, lblh, 'noise_type_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         noise_test_type_lbl.setFixedWidth(lblw)
         # noise_test_type_list = ['vs. Speed', 'vs. Azimuth', 'Standalone']
-        noise_test_type_list = ['vs. Speed', 'vs. Speed (Binned) - 1kt', 'vs. Speed (Binned) - 2kt', 'vs. RPM (Binned)', 'vs. Azimuth']
+        noise_test_type_list = ['vs. Speed', 'vs. Speed (Binned) - 1kt', 'vs. Speed (Binned) - 2kt',
+                                'vs. RPM (Binned)', 'vs. Pitch (Binned) - deg', 'vs. Pitch (Binned) - %',
+                                'vs. Azimuth']
         self.noise_test_type_cbox = ComboBox(noise_test_type_list, 200, btnh, 'noise_test_cbox',
                                              'Select a noise test type:'
                                              '\nNoise vs. speed (e.g., 0-10 kts; see Speed tab for options)'
@@ -493,10 +495,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                         'if not available in BIST)')
 
         # Create horizontal layout for Select BISTs and Clear Selected buttons
-        select_clear_layout = BoxLayout([self.select_type_btn, self.clear_type_btn], 'h')
+        select_clear_layout = BoxLayout([self.select_type_btn, self.clear_type_btn], 'h', equal_width=True)
         
-        # Create horizontal layout for Plot Selected button only
-        plot_btn_layout = BoxLayout([self.plot_bist_btn], 'h')
+        plot_btn_layout = BoxLayout([self.plot_bist_btn, self.export_plots_btn], 'h', equal_width=True)
 
         # set the BIST options layout
         bist_options_layout = BoxLayout([bist_type_layout, noise_type_layout, cmap_layout,
@@ -511,7 +512,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                'SOG: Speed Over Ground\n'
                                                                'STW: Speed Through Water\n'
                                                                'RPM: Rotations Per Minute\n')
-        prm_unit_layout = BoxLayout([prm_unit_lbl, self.prm_unit_cbox], 'h')
+        prm_unit_layout = BoxLayout([prm_unit_lbl, self.prm_unit_cbox], 'h', full_width=True)
         # self.prm_unit_gb = GroupBox('Noise testing', prm_unit_layout, False, False, 'prm_unit_gb')
 
         # set parameter plot limits
@@ -520,7 +521,7 @@ class MainWindow(QtWidgets.QMainWindow):
         prm_plot_min_lbl = Label('Min:', 20, 20, 'prm_plot_min_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         prm_plot_max_lbl = Label('Max:', 20, 20, 'prm_plot_max_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         prm_plot_lim_layout = BoxLayout([prm_plot_min_lbl, self.prm_plot_min_tb,
-                                         prm_plot_max_lbl, self.prm_plot_max_tb], 'h')
+                                         prm_plot_max_lbl, self.prm_plot_max_tb], 'h', full_width=True)
 
         self.prm_plot_lim_gb = GroupBox('Set X-axis Limits', prm_plot_lim_layout,
                                         True, False, 'parse_test_params_gb')
@@ -535,10 +536,11 @@ class MainWindow(QtWidgets.QMainWindow):
         binned_rxnoise_min_lbl = Label('Min:', 20, 20, 'binned_rxnoise_min_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         binned_rxnoise_max_lbl = Label('Max:', 20, 20, 'binned_rxnoise_max_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         binned_rxnoise_range_layout = BoxLayout([binned_rxnoise_min_lbl, self.binned_rxnoise_min_tb,
-                                                 binned_rxnoise_max_lbl, self.binned_rxnoise_max_tb], 'h')
+                                                 binned_rxnoise_max_lbl, self.binned_rxnoise_max_tb], 'h',
+                                                full_width=True)
         
         # Create group box for binned RX noise range controls (checkable)
-        binned_rxnoise_range_gb_layout = BoxLayout([binned_rxnoise_range_layout], 'v')
+        binned_rxnoise_range_gb_layout = BoxLayout([binned_rxnoise_range_layout], 'v', full_width=True)
         self.binned_rxnoise_range_gb = GroupBox('Set binned RX noise Y-axis range', binned_rxnoise_range_gb_layout, 
                                                 True, True, 'binned_rxnoise_range_gb')
         self.binned_rxnoise_range_gb.setToolTip('Control the Y-axis range of 1kt and 2kt binned RX noise speed plots')
@@ -551,10 +553,11 @@ class MainWindow(QtWidgets.QMainWindow):
         binned_error_type_lbl = Label('Error bar type:', 80, 20, 'binned_error_type_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         self.binned_error_type_cb = ComboBox(['Standard Deviation', 'Standard Error'], 120, 20, 'binned_error_type_cb')
         self.binned_error_type_cb.setToolTip('Choose between standard deviation or standard error for the linear mean error bars')
-        binned_error_type_layout = BoxLayout([binned_error_type_lbl, self.binned_error_type_cb], 'h')
+        binned_error_type_layout = BoxLayout([binned_error_type_lbl, self.binned_error_type_cb], 'h',
+                                             full_width=True)
         
         # Create group box for binned error bar type controls
-        binned_error_type_gb_layout = BoxLayout([binned_error_type_layout], 'v')
+        binned_error_type_gb_layout = BoxLayout([binned_error_type_layout], 'v', full_width=True)
         self.binned_error_type_gb = GroupBox('Binned plot error bars', binned_error_type_gb_layout, 
                                             True, True, 'binned_error_type_gb')
         self.binned_error_type_gb.setToolTip('Control the type of error bars displayed on 1kt and 2kt binned RX noise plots')
@@ -564,10 +567,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.binned_individual_cb = ComboBox(['Binned (Cyan)', 'Non-binned (Light Grey)', 'Both (Binned + Non-binned)'], 150, 20, 'binned_individual_cb')
         self.binned_individual_cb.setCurrentIndex(1)  # Set default to "Non-binned (Light Grey)"
         self.binned_individual_cb.setToolTip('Choose between binned individual measurements (cyan), non-binned individual measurements (light grey), or both layered together')
-        binned_individual_layout = BoxLayout([binned_individual_lbl, self.binned_individual_cb], 'h')
+        binned_individual_layout = BoxLayout([binned_individual_lbl, self.binned_individual_cb], 'h',
+                                             full_width=True)
         
         # Create group box for binned individual measurements controls
-        binned_individual_gb_layout = BoxLayout([binned_individual_layout], 'v')
+        binned_individual_gb_layout = BoxLayout([binned_individual_layout], 'v', full_width=True)
         self.binned_individual_gb = GroupBox('Individual measurements display', binned_individual_gb_layout, 
                                             True, True, 'binned_individual_gb')
         self.binned_individual_gb.setToolTip('Control the display of individual measurements on 1kt and 2kt binned RX noise plots')
@@ -590,7 +594,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                    '\n\nSIS 5 BISTs include speed over ground, which is parsed and used by default, '
                                    'if available. The user may assign a custom speed list in any case if speed is not '
                                    'available in the filename or applicable for the desired plot.')
-        prm_str_layout = BoxLayout([prm_str_tb_lbl, self.prm_str_tb], 'h')
+        prm_str_layout = BoxLayout([prm_str_tb_lbl, self.prm_str_tb], 'h', full_width=True)
 
         # set current text input for converting SOG to STW
         self.current_tb = LineEdit(self.current_default, 15, 20, 'current_tb',
@@ -606,7 +610,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                          '"With ship" means the ship is being aided by the current (SOG > STW)\n'
                                          '"Against ship" means the ship is fighting the current (SOG < STW)')
         self.current_dir_cbox.setEnabled(False)
-        current_layout = BoxLayout([current_lbl, self.current_tb, self.current_dir_cbox], 'h')
+        current_layout = BoxLayout([current_lbl, self.current_tb, self.current_dir_cbox], 'h', full_width=True)
 
         # set swell direction text input
         self.swell_dir_tb = LineEdit(self.swell_dir_default, 40, 20, 'swell_dir_tb',
@@ -616,7 +620,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.swell_dir_tb.setEnabled(False)
 
         swell_dir_lbl = Label('Swell direction (deg):', 120, 20, 'swell_dir_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
-        swell_dir_layout = BoxLayout([swell_dir_lbl, self.swell_dir_tb], 'h')
+        swell_dir_layout = BoxLayout([swell_dir_lbl, self.swell_dir_tb], 'h', full_width=True)
 
         sort_order_lbl = Label('Sort order:', 120, 20, 'sort_order_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         # self.sort_cbox = ComboBox(['Ascending', 'Descending', 'Unsorted'], 80, 20, 'sort_cbox',
@@ -628,12 +632,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ignore_sis5_speeds_chk = CheckBox('Ignore SiS5 Speeds', False, 'ignore_sis5_speeds_chk',
                                                'Ignore speed parsed from SiS5 file contents and parse speed from '
                                                'filename using the Filename string format')
-        sort_order_layout = BoxLayout([sort_order_lbl, self.sort_cbox, self.ignore_sis5_speeds_chk], 'h')
+        sort_order_layout = BoxLayout([sort_order_lbl, self.sort_cbox, self.ignore_sis5_speeds_chk], 'h',
+                                      full_width=True)
 
         # default_test_params_layout = BoxLayout([prm_str_layout, prm_unit_layout], 'v')
         # default_test_params_layout = BoxLayout([prm_str_layout, swell_dir_layout], 'v')
         # default_test_params_layout = BoxLayout([prm_str_layout, swell_dir_layout, sort_order_layout], 'v')
-        default_test_params_layout = BoxLayout([prm_str_layout, current_layout, swell_dir_layout, sort_order_layout], 'v')
+        default_test_params_layout = BoxLayout([prm_str_layout, current_layout, swell_dir_layout, sort_order_layout],
+                                               'v', full_width=True)
 
 
         self.parse_test_params_gb = GroupBox('Parse test params from files', default_test_params_layout,
@@ -659,23 +665,23 @@ class MainWindow(QtWidgets.QMainWindow):
         prm_min_tb_lbl = Label('Minimum param:', 120, 20, 'prm_min_tb_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         self.prm_min_tb = LineEdit('0', 40, 20, 'prm_min_tb', 'Enter the minimum speed')
         self.prm_min_tb.setValidator(QDoubleValidator(0, np.inf, 1))
-        prm_min_layout = BoxLayout([prm_min_tb_lbl, self.prm_min_tb], 'h')
+        prm_min_layout = BoxLayout([prm_min_tb_lbl, self.prm_min_tb], 'h', full_width=True)
 
         prm_max_tb_lbl = Label('Maximum param:', 120, 20, 'prm_max_tb_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         self.prm_max_tb = LineEdit('12', 40, 20, 'prm_max_tb', 'Enter the maximum speed')
         self.prm_max_tb.setValidator(QDoubleValidator(0, np.inf, 1))
-        prm_max_layout = BoxLayout([prm_max_tb_lbl, self.prm_max_tb], 'h')
+        prm_max_layout = BoxLayout([prm_max_tb_lbl, self.prm_max_tb], 'h', full_width=True)
 
         prm_int_tb_lbl = Label('Param interval:', 120, 20, 'prm_int_tb_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         self.prm_int_tb = LineEdit('2', 40, 20, 'prm_min_tb', 'Enter the speed interval')
         self.prm_int_tb.setValidator(QDoubleValidator(0, np.inf, 1))
-        prm_int_layout = BoxLayout([prm_int_tb_lbl, self.prm_int_tb], 'h')
+        prm_int_layout = BoxLayout([prm_int_tb_lbl, self.prm_int_tb], 'h', full_width=True)
 
         num_tests_tb_lbl = Label('Num. tests/interval:', 120, 20, 'num_tests_tb_lbl',
                                  (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
         self.num_tests_tb = LineEdit('10', 40, 20, 'num_tests_tb', 'Enter the number of tests at each speed')
         self.num_tests_tb.setValidator(QDoubleValidator(0, np.inf, 0))
-        prm_num_layout = BoxLayout([num_tests_tb_lbl, self.num_tests_tb], 'h')
+        prm_num_layout = BoxLayout([num_tests_tb_lbl, self.num_tests_tb], 'h', full_width=True)
 
         # total_num_params_tb_lbl = Label('Total num. intervals:', 120, 20, 'total_num_params_tb_lbl',
         #                                 (Qt.AlignRight | Qt.AlignVCenter))
@@ -689,7 +695,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.total_num_tests_tb = LineEdit('70', 40, 20, 'total_num_tests_tb',
                                            'Total number of tests in custom info')
         self.total_num_tests_tb.setEnabled(True)
-        total_test_num_layout = BoxLayout([total_num_tests_tb_lbl, self.total_num_tests_tb], 'h')
+        total_test_num_layout = BoxLayout([total_num_tests_tb_lbl, self.total_num_tests_tb], 'h', full_width=True)
 
         self.final_params_hdr = 'Params list: '
         self.final_params_lbl = Label(self.final_params_hdr + ', '.join([p for p in self.param_list]), 200, 20,
@@ -700,7 +706,7 @@ class MainWindow(QtWidgets.QMainWindow):
         #                                total_prm_num_layout, total_test_num_layout, self.final_params_lbl], 'v')
 
         custom_prm_layout = BoxLayout([prm_min_layout, prm_max_layout, prm_int_layout, prm_num_layout,
-                                       total_test_num_layout, self.final_params_lbl], 'v')
+                                       total_test_num_layout, self.final_params_lbl], 'v', full_width=True)
 
         self.custom_param_gb = GroupBox('Use custom test params', custom_prm_layout, True, False, 'custom_params_gb')
         self.custom_param_gb.setToolTip('Enter custom test parameter information.  The total number of tests shown '
@@ -711,25 +717,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # param_layout = BoxLayout([prm_unit_layout, self.parse_test_params_gb, self.custom_param_gb], 'v')
         # param_layout = BoxLayout([prm_unit_layout, self.parse_test_params_gb, self.custom_param_gb], 'v')
-        param_layout = BoxLayout([prm_unit_layout, self.prm_plot_lim_gb, self.binned_rxnoise_range_gb, 
-                                 self.binned_error_type_gb, self.binned_individual_gb, self.parse_test_params_gb, self.custom_param_gb], 'v')
+        param_layout = BoxLayout([prm_unit_layout, self.prm_plot_lim_gb, self.binned_rxnoise_range_gb,
+                                  self.binned_error_type_gb, self.binned_individual_gb, self.parse_test_params_gb,
+                                  self.custom_param_gb], 'v', full_width=True)
 
 
-        self.noise_test_gb = GroupBox('RX Noise Testing', param_layout, False, False, 'noise_test_gb')
+        self.noise_test_gb = GroupBox('RX Noise Testing Plot Parameters', param_layout, False, False, 'noise_test_gb')
 
         # set up tabs
         self.tabs = QtWidgets.QTabWidget()
 
-        # set up tab 1: plot options
-        self.tab1 = QtWidgets.QWidget()
-        self.tab1.layout = file_btn_layout
-        self.tab1.layout.addStretch()
-        self.tab1.setLayout(self.tab1.layout)
-
-        # TEST set up tab 2: combined filtering and advanced noise test options
+        # set up tab 2: combined filtering and advanced noise test options
         self.tab2 = QtWidgets.QWidget()
         # self.tab2.layout = BoxLayout([plot_btn_layout, param_layout], 'v')
-        self.tab2.layout = BoxLayout([bist_options_layout, self.noise_test_gb], 'v')
+        self.tab2.layout = BoxLayout([bist_options_layout], 'v')
         self.tab2.layout.addStretch()
         self.tab2.setLayout(self.tab2.layout)
 
@@ -746,7 +747,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.tab3.setLayout(self.tab3.layout)
 
         # add tabs to tab layout
-        self.tabs.addTab(self.tab1, 'Files')
         self.tabs.addTab(self.tab2, 'Plot')
         # self.tabs.addTab(self.tab3, 'Noise Test')
 
@@ -785,8 +785,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # add progress bar for total file list
         self.current_fnum_lbl = QtWidgets.QLabel('Current file count:')
-        self.current_outdir_lbl = QtWidgets.QLabel('Output Dir: ' + self.output_dir)
-
         self.calc_pb_lbl = QtWidgets.QLabel('Total Progress:')
         self.calc_pb = QtWidgets.QProgressBar()
         self.calc_pb.setGeometry(0, 0, 200, 30)
@@ -820,54 +818,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_main_layout(self):  # set the main layout with files tab on left, file list/log in middle, and controls on right
         main_layout = QtWidgets.QHBoxLayout()
         
-        # Left column: Files section and Sources (with Activity Log at bottom)
+        # Left column: Sources (file list + controls), Plot, Activity Log
         left_column = QtWidgets.QVBoxLayout()
-        
-        # Create Files group box with title - tightened height
-        files_gb = QtWidgets.QGroupBox('Input Files')
-        files_gb.setLayout(self.tab1.layout)
-        files_gb.setMaximumHeight(300)  # Limit height to tighten up
-        files_gb.setFixedWidth(315)  # Set fixed width for Files section (increased by 35px)
-        left_column.addWidget(files_gb)
-        
-        # Add Sources (file list) below Files section - will stretch to fill space
-        self.file_list_gb.setFixedWidth(315)  # Match Files section width (increased by 35px)
-        left_column.addWidget(self.file_list_gb, 1)  # Give it stretch factor of 1
-        
-        # Create Export Control group box
-        output_gb = QtWidgets.QGroupBox('Export Control')
-        output_layout = QtWidgets.QVBoxLayout()
-        
-        # Create horizontal layout for Export Plots and Open folder checkboxes
-        checkboxes_layout = QtWidgets.QHBoxLayout()
-        checkboxes_layout.addWidget(self.export_plots_chk)
-        checkboxes_layout.addWidget(self.open_outdir_chk)
-        output_layout.addLayout(checkboxes_layout)
-        
-        # Add Select Output Dir button
-        output_layout.addWidget(self.get_outdir_btn)
-        
-        # Add Output Dir information string
-        output_layout.addWidget(self.current_outdir_lbl)
-        
-        output_gb.setLayout(output_layout)
-        output_gb.setFixedWidth(315)  # Match Files section width
-        output_gb.setMaximumHeight(120)  # Reduced height since session buttons moved
-        left_column.addWidget(output_gb)
-        
-        # Create Plot Session Control group box
-        session_gb = QtWidgets.QGroupBox('Plot Session Control')
-        session_layout = QtWidgets.QVBoxLayout()
-        
-        # Add session buttons
-        save_load_layout = BoxLayout([self.save_session_btn, self.load_session_btn], 'h')
-        session_buttons_layout = BoxLayout([save_load_layout, self.restore_defaults_btn], 'v')
-        session_layout.addLayout(session_buttons_layout)
-        
-        session_gb.setLayout(session_layout)
-        session_gb.setFixedWidth(315)  # Match other sections width
-        session_gb.setMaximumHeight(100)  # Height for session buttons
-        left_column.addWidget(session_gb)
+
+        self.file_list_layout.addLayout(self.file_btn_layout)
+        self.file_list_gb.setFixedWidth(315)
+        left_column.addWidget(self.file_list_gb, 1)
+
+        plot_gb = QtWidgets.QGroupBox('Plot')
+        plot_gb.setLayout(self.tab2.layout)
+        plot_gb.setFixedWidth(315)
+        left_column.addWidget(plot_gb)
         
         # Add Activity Log first - same width with fixed height
         self.log_gb.setFixedWidth(315)  # Match Files section width exactly (increased by 35px)
@@ -929,15 +890,22 @@ class MainWindow(QtWidgets.QMainWindow):
         # Right column: System info and Plot section
         right_column = QtWidgets.QVBoxLayout()
         
-        # Set System Information to same width as Plot section
-        self.custom_info_gb.setFixedWidth(320)  # Match Plot section width
+        self.custom_info_gb.setFixedWidth(320)
         right_column.addWidget(self.custom_info_gb)
-        
-        # Create Plot group box with title
-        plot_gb = QtWidgets.QGroupBox('Plot')
-        plot_gb.setLayout(self.tab2.layout)
-        plot_gb.setFixedWidth(320)  # Set fixed width for Plot section
-        right_column.addWidget(plot_gb)
+
+        self.noise_test_gb.setFixedWidth(320)
+        right_column.addWidget(self.noise_test_gb)
+
+        session_gb = QtWidgets.QGroupBox('Plot Session Control')
+        session_layout = QtWidgets.QVBoxLayout()
+        save_load_layout = BoxLayout([self.save_session_btn, self.load_session_btn], 'h', equal_width=True)
+        session_layout.addLayout(save_load_layout)
+        set_equal_horizontal_width(self.restore_defaults_btn)
+        session_layout.addWidget(self.restore_defaults_btn)
+        session_gb.setLayout(session_layout)
+        session_gb.setFixedWidth(320)
+        session_gb.setMaximumHeight(100)
+        right_column.addWidget(session_gb)
         right_column.addStretch()
         
         # Set minimum width for right column
@@ -952,6 +920,18 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.addWidget(right_widget)
         
         self.mainWidget.setLayout(main_layout)
+
+    def _set_noise_param_unit(self, unit_name):
+        """Select a parameter unit in the RX Noise combo box if present."""
+        unit_index = -1
+        for i in range(self.prm_unit_cbox.count()):
+            if self.prm_unit_cbox.itemText(i) == unit_name:
+                unit_index = i
+                break
+        if unit_index >= 0:
+            self.prm_unit_cbox.setCurrentIndex(unit_index)
+        else:
+            self.update_log(f'Warning: {unit_name} option not found in parameter unit dropdown')
 
     def update_noise_param_string(self):  # update the dict of strings for parsing noise parameters from filenames
         self.noise_params[self.prm_unit_cbox.currentText()] = self.prm_str_tb.text()
@@ -983,23 +963,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.update_swell_dir()
 
             elif self.noise_test_type_cbox.currentText() == 'vs. RPM (Binned)':  # set parameter unit to RPM
-                # Find the index of 'RPM' in the dropdown
-                rpm_index = -1
-                for i in range(self.prm_unit_cbox.count()):
-                    if self.prm_unit_cbox.itemText(i) == 'RPM':
-                        rpm_index = i
-                        break
-                
-                if rpm_index >= 0:
-                    self.prm_unit_cbox.setCurrentIndex(rpm_index)
-                    self.update_log('Parameter unit automatically set to RPM for RPM binned plots')
-                else:
-                    self.update_log('Warning: RPM option not found in parameter unit dropdown')
-                
-                # Set Individual Points dropdown to "Binned (Cyan)"
-                self.binned_individual_cb.setCurrentIndex(0)  # Index 0 is "Binned (Cyan)"
+                self._set_noise_param_unit('RPM')
+                self.update_log('Parameter unit automatically set to RPM for RPM binned plots')
+                self.binned_individual_cb.setCurrentIndex(0)
                 self.update_log('Individual Points automatically set to Binned (Cyan) for RPM binned plots')
-                
+                self.prm_unit_cbox.setEnabled(True)
+                self.prm_str_tb.setEnabled(True)
+                self.swell_dir_tb.setEnabled(False)
+                self.custom_param_gb.setEnabled(True)
+
+            elif self.noise_test_type_cbox.currentText() == 'vs. Pitch (Binned) - deg':
+                self._set_noise_param_unit('Pitch (deg)')
+                self.update_log('Parameter unit automatically set to Pitch (deg) for pitch binned plots')
+                self.binned_individual_cb.setCurrentIndex(0)
+                self.prm_unit_cbox.setEnabled(True)
+                self.prm_str_tb.setEnabled(True)
+                self.swell_dir_tb.setEnabled(False)
+                self.custom_param_gb.setEnabled(True)
+
+            elif self.noise_test_type_cbox.currentText() == 'vs. Pitch (Binned) - %':
+                self._set_noise_param_unit('Pitch (%)')
+                self.update_log('Parameter unit automatically set to Pitch (%) for pitch binned plots')
+                self.binned_individual_cb.setCurrentIndex(0)
                 self.prm_unit_cbox.setEnabled(True)
                 self.prm_str_tb.setEnabled(True)
                 self.swell_dir_tb.setEnabled(False)
@@ -1118,6 +1103,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.get_current_file_list()  # update self.file_list and file count
         self.current_fnum_lbl.setText('Current file count: ' + str(len(self.filenames)))
+        if fnames_new:
+            self._clear_export_button_highlight()
 
     def show_file_paths(self):
         # show or hide path for all items in file_list according to show_paths_chk selection
@@ -1151,15 +1138,144 @@ class MainWindow(QtWidgets.QMainWindow):
             self.input_dir = ''
             pass
 
-    def should_export_plots(self):  # check if plots should be exported based on checkbox
-        return self.export_plots_chk.isChecked()
+    def _clear_export_button_highlight(self):
+        """Reset export button text color after export or when input data changes."""
+        self._export_pending = False
+        self.export_plots_btn.setStyleSheet(self._export_btn_style_default)
 
-    def update_open_folder_state(self):  # enable/disable open folder checkbox based on export plots checkbox
-        if self.export_plots_chk.isChecked():
-            self.open_outdir_chk.setEnabled(True)
-        else:
-            self.open_outdir_chk.setEnabled(False)
-            self.open_outdir_chk.setChecked(False)  # Uncheck if disabled
+    def _set_export_button_pending(self):
+        """Highlight export button in orange until export or new data is loaded."""
+        self._export_pending = True
+        self.export_plots_btn.setStyleSheet(self._export_btn_style_pending)
+
+    def _update_export_button(self, mark_pending=False):
+        """Enable export and set label based on number of plots from the last run."""
+        n = len(self.all_figures) if hasattr(self, 'all_figures') and self.all_figures else 0
+        self.export_plots_btn.setText('Export Plots' if n > 1 else 'Export Plot')
+        self.export_plots_btn.setEnabled(n > 0)
+        if mark_pending and n > 0:
+            self._set_export_button_pending()
+        elif n == 0:
+            self._clear_export_button_highlight()
+
+    def _export_rx_noise_chart(self, plot_data, output_dir):
+        """Export one RX noise figure using arguments matching its plot type."""
+        plot_type = plot_data.get('plot_type', '')
+        test_type = plot_data.get('test_type', 'speed')
+        bist_plot = plot_data['bist']
+
+        if plot_type == 'rx_noise':
+            read_bist.plot_rx_noise(
+                bist_plot,
+                save_figs=True,
+                output_dir=output_dir,
+                test_type=test_type,
+                param=plot_data.get('param', []),
+                param_unit=plot_data.get('param_unit', 'SOG (kt)'),
+                param_adjust=plot_data.get('param_adjust', 0.0),
+                param_lims=plot_data.get('param_lims', []),
+                cmap=plot_data.get('cmap', 'jet'),
+                sort=plot_data.get('sort', 'ascending'),
+                redblue_center=plot_data.get('redblue_center', 55),
+                return_fig=False,
+                gui_embed=True)
+            return
+
+        plot_fn = plot_data.get('plot_function')
+        if plot_fn is None:
+            self.update_log(f'Warning: No export handler for RX noise plot type {plot_type!r}')
+            return
+
+        plot_test_type = 'speed' if test_type in (
+            'speed_binned', 'speed_binned_2kt', 'rpm_binned',
+            'pitch_binned_deg', 'pitch_binned_pct') else test_type
+        result = plot_fn(
+            bist_plot,
+            save_figs=True,
+            output_dir=output_dir,
+            test_type=plot_test_type,
+            param=plot_data.get('param', []),
+            param_unit=plot_data.get('param_unit', 'SOG (kt)'),
+            param_adjust=plot_data.get('param_adjust', 0.0),
+            param_lims=plot_data.get('param_lims', []),
+            binned_range_lims=plot_data.get('binned_range_lims', []),
+            error_bar_type=plot_data.get('error_bar_type', 'Standard Deviation'),
+            individual_type=plot_data.get('individual_type', 'Non-binned (Light Grey)'),
+            return_fig=False)
+        if isinstance(result, tuple):
+            result = result[0]
+
+    def _prompt_export_directory(self):
+        """Ask user for export directory; remember choice between sessions."""
+        config = load_bist_session_config()
+        default_dir = config.get("last_output_directory",
+                                 os.getenv('USERPROFILE') or os.getenv('HOME') or os.getcwd())
+        new_output_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self, 'Select directory to save plots', default_dir)
+        if new_output_dir:
+            self.output_dir = new_output_dir.replace('/', '\\')
+            update_bist_last_directory("last_output_directory", new_output_dir)
+            return self.output_dir
+        return None
+
+    def export_plots(self):
+        """Export all plots and text reports from the last Plot BIST run."""
+        if not getattr(self, 'all_figures', None) or len(self.all_figures) == 0:
+            QtWidgets.QMessageBox.warning(self, 'Export', 'No plots to export. Use Plot BIST first.')
+            return
+        if not self.last_plotted_bist:
+            QtWidgets.QMessageBox.warning(self, 'Export', 'No plot data available to export.')
+            return
+
+        output_dir = self._prompt_export_directory()
+        if not output_dir:
+            self.update_log('Export cancelled.')
+            return
+
+        bist = self.last_plotted_bist
+        bist_test_type = self.last_bist_test_type
+        self.update_log(f'Exporting to {output_dir}...')
+
+        try:
+            if bist_test_type == self.bist_list[1]:  # TX Channels
+                tx_oos = read_bist.write_tx_out_of_spec_report(bist, output_dir=output_dir)
+                if tx_oos:
+                    self.update_log(f'Wrote {len(tx_oos)} TX out-of-spec report(s)')
+                for ps in [1, 2]:
+                    read_bist.plot_tx_z(bist, plot_style=ps, save_figs=True, output_dir=output_dir)
+                f_hist = read_bist.plot_tx_z_history(bist, save_figs=True, output_dir=output_dir)
+                if f_hist:
+                    self.update_log(f'Saved TX history plot {f_hist}')
+
+            elif bist_test_type == self.bist_list[2]:  # RX Channels
+                rx_oos = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=output_dir)
+                if rx_oos:
+                    self.update_log(f'Wrote {len(rx_oos)} RX array out-of-spec report(s)')
+                read_bist.plot_rx_z(bist, save_figs=True, output_dir=output_dir)
+                read_bist.plot_rx_z_history(bist, save_figs=True, output_dir=output_dir)
+
+            elif bist_test_type == self.bist_list[3]:  # RX Noise
+                for plot_data in self.frequency_data:
+                    self._export_rx_noise_chart(plot_data, output_dir)
+
+            n_plots = len(self.all_figures)
+            self.update_log(f'Exported {n_plots} plot(s) and reports to {output_dir}')
+            QtWidgets.QMessageBox.information(
+                self, 'Export complete',
+                f'Saved plot files to:\n{output_dir}')
+            self._clear_export_button_highlight()
+
+        except Exception as e:
+            self.update_log(f'Error during export: {e}')
+            import traceback
+            self.update_log(traceback.format_exc())
+            QtWidgets.QMessageBox.critical(self, 'Export failed', str(e))
+        finally:
+            import matplotlib.pyplot as plt
+            for fig_num in plt.get_fignums():
+                fig = plt.figure(fig_num)
+                if fig not in getattr(self, 'all_figures', []):
+                    plt.close(fig)
 
     def save_session(self):  # save current session data to file
         try:
@@ -1253,29 +1369,6 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self.update_log(f'Error loading session data: {str(e)}')
 
-    def get_output_dir(self):  # get output directory for saving plots
-        try:
-            # Load last used output directory from session config
-            config = load_bist_session_config()
-            # Use USERPROFILE on Windows, HOME on Unix-like systems
-            default_dir = os.getenv('USERPROFILE') or os.getenv('HOME') or os.getcwd()
-            last_output_dir = config.get("last_output_directory", default_dir)
-            
-            new_output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Select output directory',
-                                                                        last_output_dir)
-
-            if new_output_dir != '':  # update output directory if not cancelled
-                self.output_dir = new_output_dir.replace('/','\\')
-                self.update_log('Selected output directory: ' + self.output_dir)
-                self.current_outdir_lbl.setText('Output Dir: ' + self.output_dir)
-                
-                # Save the selected directory to session config
-                update_bist_last_directory("last_output_directory", new_output_dir)
-
-        except:
-            self.update_log('No output directory selected.')
-            pass
-
     # def remove_files(self, clear_all=False):  # remove selected files
     #     self.get_current_file_list()
     #     selected_files = self.file_list.selectedItems()
@@ -1299,6 +1392,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # remove selected files or clear all files, update det and spec dicts accordingly
         removed_files = remove_files(self, clear_all)
         self.get_current_file_list()
+        if removed_files or clear_all:
+            self._clear_export_button_highlight()
 
         if self.filenames == []:  # all files have been removed
             self.update_log('Cleared all files')
@@ -1456,14 +1551,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cruise_name = self.cruise_tb.text().strip()
         self.date_str = self.date_tb.text().strip()
 
-        # reset the text color after clicking/activating/entering user info
-        sender_button = self.sender()
-        sender_button.setStyleSheet('color: cyan')
+        # Reset field color only for system-info widgets (not Plot Selected / other buttons)
+        sender = self.sender()
+        sys_info_widgets = (self.model_cbox, self.sn_tb, self.ship_tb, self.cruise_tb, self.date_tb)
+        if sender not in sys_info_widgets:
+            return
 
-        # print('current list of missing fields is:', self.missing_fields)
-        # remove the user-updated field from the list of missing fields
-        if sender_button.objectName() in self.missing_fields:
-            self.missing_fields.remove(sender_button.objectName())
+        sender.setStyleSheet('color: cyan')
+        if sender.objectName() in self.missing_fields:
+            self.missing_fields.remove(sender.objectName())
             # self.plot_bist_btn.setEnabled(False)
 
     def trigger_auto_update(self):
@@ -1599,7 +1695,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
                                              return_fig=True)
-                    elif current_freq_data['test_type'] == 'rpm_binned':
+                    elif current_freq_data['test_type'] in ('rpm_binned', 'pitch_binned_deg', 'pitch_binned_pct'):
                         result = plot_function(current_freq_data['bist'], save_figs=False,
                                              output_dir=self.output_dir,
                                              test_type='speed',
@@ -1611,6 +1707,21 @@ class MainWindow(QtWidgets.QMainWindow):
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
                                              return_fig=True)
+                    elif current_freq_data.get('plot_type') == 'rx_noise':
+                        result = read_bist.plot_rx_noise(
+                            current_freq_data['bist'],
+                            save_figs=False,
+                            output_dir=self.output_dir,
+                            test_type=current_freq_data['test_type'],
+                            param=current_freq_data.get('param', []),
+                            param_unit=current_freq_data['param_unit'],
+                            param_adjust=param_adjust,
+                            param_lims=current_freq_data['param_lims'],
+                            cmap=current_freq_data.get('cmap', 'jet'),
+                            sort=current_freq_data.get('sort', 'ascending'),
+                            redblue_center=current_freq_data.get('redblue_center', 55),
+                            return_fig=True,
+                            gui_embed=True)
                     else:
                         # For other plot types, just regenerate with stored data
                         result = plot_function(**current_freq_data)
@@ -1759,6 +1870,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bist_test_type = self.type_cbox.currentText()
         self.update_log('Plotting selected ' + bist_test_type + ' BIST files')
         self.get_current_file_list()
+        self.plot_bist_btn.setStyleSheet('')
         self.update_system_info()
         
         # Clear previous navigation state
@@ -1767,6 +1879,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_chart_index = 0
         self.total_charts = 0
         self.freq_list = []  # Store chart names
+        self.last_plotted_bist = None
+        self.last_bist_test_type = None
+        self._clear_export_button_highlight()
+        self._update_export_button()
         self.update_navigation_controls()
         
         # Update total tests for custom parameters if group box is enabled
@@ -1793,17 +1909,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log('Please select at least one BIST to plot...')
 
         if self.type_cbox.currentIndex() == 2:  # check if RX Noise test
-            if self.noise_test_type_cbox.currentIndex() in [0, 1, 2, 3]:  # check if speed test (regular or binned) or RPM binned
+            if self.noise_test_type_cbox.currentIndex() in [0, 1, 2, 3, 4, 5]:
                 if self.custom_param_gb.isChecked():
-                    self.update_log('RX Noise vs. Speed: Custom speeds entered by user will override any speeds parsed '
+                    self.update_log('RX Noise: Custom test parameters entered by user will override values parsed '
                                     'from files or filenames, and will be applied in order of files loaded')
                 else:
-                    if self.noise_test_type_cbox.currentIndex() == 3:  # RPM binned
+                    noise_mode = self.noise_test_type_cbox.currentText()
+                    if noise_mode == 'vs. RPM (Binned)':
                         self.update_log('RX Noise vs. RPM (Binned): RPM values will be parsed from filename, '
                                         'if available')
+                    elif noise_mode in ('vs. Pitch (Binned) - deg', 'vs. Pitch (Binned) - %'):
+                        self.update_log('RX Noise vs. Pitch (Binned): Pitch values will be parsed from filename '
+                                        '(or custom parameters), if available')
                     else:
-                        self.update_log('RX Noise vs. Speed: Speeds will be parsed from filename (SIS 4) or file (SIS 5), '
-                                        'if available')
+                        self.update_log('RX Noise vs. Speed: Speeds will be parsed from filename (SIS 4) or file '
+                                        '(SIS 5), if available')
             else:  # check if azimuth test
                 self.update_log('RX Noise vs. Azimuth: Ship heading will be parsed from the filename in the '
                                 'format _123T.txt'' or _123.txt, if available.\n\n'
@@ -1937,7 +2057,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # print('and len', len(bist_temp['test']))
 
                     # get speed or heading of test from filename
-                    if rxn_test_type in [0, 1, 2, 3]:  # RX noise vs speed, 1kt binned, 2kt binned, or RPM binned; get speed from fname "_6_kts.txt", "_9p5_kts.txt"
+                    if rxn_test_type in [0, 1, 2, 3, 4, 5]:  # speed, binned speed, RPM/pitch binned; parse param from fname
 
                         print('\n\n****got bist_temp[speed] =', bist_temp['speed'])
 
@@ -2015,7 +2135,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 bist_fail_list.append(fname)
                                 continue
 
-                    elif rxn_test_type == 4:  # RX noise vs azimuth rel to seas; get hdg, swell dir from fname or user
+                    elif rxn_test_type == 6:  # RX noise vs azimuth rel to seas; get hdg, swell dir from fname or user
                         if bist_temp['hdg_true'] == [] and bist_temp['azimuth'] == []:
                             try:
                                 self.update_log('Parsing headings (and azimuths, if available) from filenames')
@@ -2240,13 +2360,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log('     ' + str(i + 1) + ". " + bist_fail_list[i])
 
             self.update_log('Plotting ' + str(bist_count) + ' ' + self.type_cbox.currentText() + ' BIST files...')
+            self.last_plotted_bist = bist
+            self.last_bist_test_type = bist_test_type
 
             if bist_test_type == self.bist_list[1]:  # TX Channels
-                # Write TX out-of-spec report(s)
-                tx_oos_reports = read_bist.write_tx_out_of_spec_report(bist, output_dir=self.output_dir)
-                if tx_oos_reports:
-                    self.update_log(f"Wrote {len(tx_oos_reports)} TX out-of-spec report(s) in {self.output_dir}")
-
                 # Initialize navigation for TX channel plots
                 self.all_figures = []
                 self.frequency_data = []
@@ -2268,8 +2385,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.frequency_data.append(plot_data)
                             
                             # Generate the plot and get the figure
-                            figure = self.generate_tx_channel_plot(bist, file_index=i, plot_style=ps, 
-                                                                  save_figs=self.should_export_plots(), output_dir=self.output_dir)
+                            figure = self.generate_tx_channel_plot(bist, file_index=i, plot_style=ps,
+                                                                  save_figs=False, output_dir=self.output_dir)
                             if figure:
                                 self.all_figures.append(figure)
                                 self.total_charts += 1
@@ -2314,25 +2431,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log(f"Generated {len(self.all_figures)} TX channel plots. Use navigation buttons to cycle through them.")
                 else:
                     self.update_log("No TX channel plots were generated successfully.")
-                
-                # Also save files to disk as before
-                for ps in [1, 2]:  # loop through and plot both available styles of TX Z plots, then plot history
-                    f_out = read_bist.plot_tx_z(bist, plot_style=ps, save_figs=self.should_export_plots(), output_dir=self.output_dir)
-                self.update_log('Saved ' + str(len(f_out)) + ' ' + self.bist_list[1] + ' plot(s) in ' + self.output_dir)
-
-                # plot TX Z history
-                f_out = read_bist.plot_tx_z_history(bist, save_figs=self.should_export_plots(), output_dir=self.output_dir)
-                if f_out:
-                    self.update_log('Saved TX Z history plot ' + f_out + ' in ' + self.output_dir)
-                else:
-                    self.update_log('No TX Z history plot saved (check log for missing date/time warnings)')
+                self._update_export_button(mark_pending=True)
 
             elif bist_test_type == self.bist_list[2]:  # RX Channels
-                # Write RX array out-of-spec report(s)
-                rx_array_oos_reports = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=self.output_dir)
-                if rx_array_oos_reports:
-                    self.update_log(f"Wrote {len(rx_array_oos_reports)} RX array out-of-spec report(s) in {self.output_dir}")
-
                 # Initialize navigation for RX channel plots
                 self.all_figures = []
                 self.frequency_data = []
@@ -2408,10 +2509,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log(f"Generated {len(self.all_figures)} RX channel plots. Use navigation buttons to cycle through them.")
                 else:
                     self.update_log("No RX channel plots were generated successfully.")
-                
-                # Also save files to disk as before
-                read_bist.plot_rx_z(bist, save_figs=self.should_export_plots(), output_dir=self.output_dir)
-                read_bist.plot_rx_z_history(bist, save_figs=self.should_export_plots(), output_dir=self.output_dir)
+                self._update_export_button(mark_pending=True)
 
             elif bist_test_type == self.bist_list[3]:  # RX Noise
                 freq_list = bist['frequency'][0][0]  # freq list; assume identical across all files
@@ -2429,7 +2527,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     test_type = 'speed_binned_2kt'
                 elif dropdown_index == 3:  # vs. RPM (Binned)
                     test_type = 'rpm_binned'
-                elif dropdown_index == 4:  # vs. Azimuth
+                elif dropdown_index == 4:  # vs. Pitch (Binned) - deg
+                    test_type = 'pitch_binned_deg'
+                elif dropdown_index == 5:  # vs. Pitch (Binned) - %
+                    test_type = 'pitch_binned_pct'
+                elif dropdown_index == 6:  # vs. Azimuth
                     test_type = 'azimuth'
                 else:
                     test_type = 'speed'  # fallback
@@ -2453,7 +2555,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     param_count = len(bist['test'])  # Use actual number of test files, not parameter count
                     print('using custom param list=', param_list)
 
-                elif test_type == 'speed' or test_type == 'speed_binned' or test_type == 'speed_binned_2kt' or test_type == 'rpm_binned':
+                elif test_type in ('speed', 'speed_binned', 'speed_binned_2kt', 'rpm_binned',
+                                   'pitch_binned_deg', 'pitch_binned_pct'):
                     # param_list = bist['speed_bist']
                     param_count = len(bist['speed'])
 
@@ -2524,7 +2627,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.frequency_data.append(plot_data)
                             
                             # Generate and display the plot
-                            figure_result = read_bist.plot_rx_noise_binned_new(bist, save_figs=self.should_export_plots(),
+                            figure_result = read_bist.plot_rx_noise_binned_new(bist, save_figs=False,
                                                                      output_dir=self.output_dir,
                                                                      test_type=plot_test_type,
                                                                      param=param_list,
@@ -2586,7 +2689,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self.frequency_data.append(plot_data)
                                 
                                 # Generate the plot
-                                figure_result = read_bist.plot_rx_noise_binned_new(bist_freq, save_figs=self.should_export_plots(),
+                                figure_result = read_bist.plot_rx_noise_binned_new(bist_freq, save_figs=False,
                                                                          output_dir=self.output_dir,
                                                                          test_type=plot_test_type,
                                                                          param=param_list,
@@ -2664,7 +2767,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.frequency_data.append(plot_data)
                             
                             # Generate and display the plot
-                            figure_result = read_bist.plot_rx_noise_binned_2kt(bist, save_figs=self.should_export_plots(),
+                            figure_result = read_bist.plot_rx_noise_binned_2kt(bist, save_figs=False,
                                                                      output_dir=self.output_dir,
                                                                      test_type=plot_test_type,
                                                                      param=param_list,
@@ -2727,7 +2830,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self.frequency_data.append(plot_data)
                                 
                                 # Generate the plot
-                                figure_result = read_bist.plot_rx_noise_binned_2kt(bist_freq, save_figs=self.should_export_plots(),
+                                figure_result = read_bist.plot_rx_noise_binned_2kt(bist_freq, save_figs=False,
                                                                          output_dir=self.output_dir,
                                                                          test_type=plot_test_type,
                                                                          param=param_list,
@@ -2754,9 +2857,14 @@ class MainWindow(QtWidgets.QMainWindow):
                         else:
                             self.update_log('No valid 2kt binned plots generated')
                             return
-                elif test_type == 'rpm_binned':
-                    self.update_log('Generating binned RX noise plot (RPM bins)...')
-                    # For RPM binned plots, we need to use 'speed' as the test_type for the plotting function
+                elif test_type in ('rpm_binned', 'pitch_binned_deg', 'pitch_binned_pct'):
+                    if test_type == 'rpm_binned':
+                        discrete_plot_fn = read_bist.plot_rx_noise_binned_rpm
+                        discrete_label = 'RPM'
+                    else:
+                        discrete_plot_fn = read_bist.plot_rx_noise_binned_pitch
+                        discrete_label = 'Pitch'
+                    self.update_log(f'Generating binned RX noise plot ({discrete_label} bins)...')
                     plot_test_type = 'speed'
                     
                     # Get binned RX noise range parameters if group box is checked
@@ -2769,9 +2877,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         except ValueError:
                             self.update_log('Warning: Invalid binned RX noise range values, using default range')
                     
-                    # Handle multiple frequencies for RPM binned plotting (same logic as regular plotting)
+                    # Handle multiple frequencies for discrete binned plotting (same logic as regular plotting)
                     if len(set(freq_list)) == 1:
-                        print('single frequency found in RPM binned RX Noise test')
+                        print(f'single frequency found in {discrete_label} binned RX Noise test')
                         bist['frequency'] = [freq_list]  # simplify single frequency, assuming same across all tests
                         
                         # Initialize navigation for single chart
@@ -2786,7 +2894,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             # Store the data needed to regenerate this plot
                             plot_data = {
                                 'bist': bist,
-                                'test_type': 'rpm_binned',
+                                'test_type': test_type,
                                 'plot_type': 'rx_noise_binned',  # Add consistent plot_type key
                                 'param': param_list,
                                 'param_unit': self.prm_unit_cbox.currentText(),
@@ -2795,7 +2903,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'binned_range_lims': binned_range_lims,
                                 'error_bar_type': self.binned_error_type_cb.currentText(),
                                 'individual_type': self.binned_individual_cb.currentText(),
-                                'plot_function': read_bist.plot_rx_noise_binned_rpm,  # Store function for regeneration
+                                'plot_function': discrete_plot_fn,
                                 'model': self.model_number,
                                 'sn': self.sn,
                                 'ship_name': self.ship_name,
@@ -2805,7 +2913,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.frequency_data.append(plot_data)
                             
                             # Generate the plot
-                            figure_result = read_bist.plot_rx_noise_binned_rpm(bist, save_figs=self.should_export_plots(),
+                            figure_result = discrete_plot_fn(bist, save_figs=False,
                                                                          output_dir=self.output_dir,
                                                                          test_type=plot_test_type,
                                                                          param=param_list,
@@ -2828,11 +2936,11 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.update_navigation_controls()
                             
                         except Exception as e:
-                            self.update_log(f'Error generating RPM binned plot: {str(e)}')
+                            self.update_log(f'Error generating {discrete_label} binned plot: {str(e)}')
                             return
                     else:
                         # Multiple frequencies - generate separate plots for each frequency
-                        print('multiple frequencies found in RPM binned RX Noise test')
+                        print(f'multiple frequencies found in {discrete_label} binned RX Noise test')
                         
                         # Initialize navigation for multiple charts
                         self.all_figures = []
@@ -2860,7 +2968,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 # Store the data needed to regenerate this plot
                                 plot_data = {
                                     'bist': bist_freq,
-                                    'test_type': 'rpm_binned',
+                                    'test_type': test_type,
                                     'plot_type': 'rx_noise_binned',  # Add consistent plot_type key
                                     'param': param_list,
                                     'param_unit': self.prm_unit_cbox.currentText(),
@@ -2869,7 +2977,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'binned_range_lims': binned_range_lims,
                                     'error_bar_type': self.binned_error_type_cb.currentText(),
                                     'individual_type': self.binned_individual_cb.currentText(),
-                                    'plot_function': read_bist.plot_rx_noise_binned_rpm,  # Store function for regeneration
+                                    'plot_function': discrete_plot_fn,
                                     'model': self.model_number,
                                     'sn': self.sn,
                                     'ship_name': self.ship_name,
@@ -2879,7 +2987,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self.frequency_data.append(plot_data)
                                 
                                 # Generate the plot for this frequency
-                                figure_result = read_bist.plot_rx_noise_binned_rpm(bist_freq, save_figs=self.should_export_plots(),
+                                figure_result = discrete_plot_fn(bist_freq, save_figs=False,
                                                                          output_dir=self.output_dir,
                                                                          test_type=plot_test_type,
                                                                          param=param_list,
@@ -2898,7 +3006,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self.all_figures.append(figure)
                                 
                             except Exception as e:
-                                self.update_log(f'Error generating RPM binned plot for frequency {f}: {str(e)}')
+                                self.update_log(f'Error generating {discrete_label} binned plot for frequency {f}: {str(e)}')
                                 continue
                         
                         # Display the first frequency plot in GUI
@@ -2906,7 +3014,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.display_current_frequency()
                             self.update_navigation_controls()
                         else:
-                            self.update_log('No valid RPM binned plots generated')
+                            self.update_log(f'No valid {discrete_label} binned plots generated')
                             return
                 else:
                     # Regular plotting (not binned)
@@ -2928,7 +3036,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             plot_data = {
                                 'bist': bist,
                                 'test_type': test_type,
-                                'plot_type': 'rx_noise',  # Add consistent plot_type key
+                                'plot_type': 'rx_noise',
+                                'plot_function': read_bist.plot_rx_noise,
                                 'param': param_list,
                                 'param_unit': self.prm_unit_cbox.currentText(),
                                 'param_adjust': param_adjust,
@@ -2940,7 +3049,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.frequency_data.append(plot_data)
                             
                             # Generate and display the plot
-                            figure = read_bist.plot_rx_noise(bist, save_figs=self.should_export_plots(),
+                            figure = read_bist.plot_rx_noise(bist, save_figs=False,
                                                                      output_dir=self.output_dir,
                                                                      test_type=test_type,
                                                                      param=param_list,
@@ -2998,7 +3107,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                 plot_data = {
                                     'bist': bist_freq,
                                     'test_type': test_type,
-                                    'plot_type': 'rx_noise',  # Add consistent plot_type key
+                                    'plot_type': 'rx_noise',
+                                    'plot_function': read_bist.plot_rx_noise,
                                     'param': param_list,
                                     'param_unit': param_unit,
                                     'param_adjust': param_adjust,
@@ -3010,7 +3120,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self.frequency_data.append(plot_data)
                                 
                                 # Create the plot and get the figure
-                                figure = read_bist.plot_rx_noise(bist_freq, save_figs=self.should_export_plots(),
+                                figure = read_bist.plot_rx_noise(bist_freq, save_figs=False,
                                                                          output_dir=self.output_dir,
                                                                          test_type=test_type,
                                                                          param=param_list,  # [] if unspecified
@@ -3040,19 +3150,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         else:
                             self.update_log("No frequency plots were generated successfully.")
 
+                self._update_export_button(mark_pending=True)
+
             elif bist_test_type == self.bist_list[4]:  # RX Spectrum
                 print('RX Spectrum parser and plotter are not available yet...')
-
-            if self.open_outdir_chk.isChecked():
-                print('trying to open the output directory: ', self.output_dir.replace('/','\\'))
-                try:
-                    import subprocess
-                    # Use subprocess instead of os.system to avoid blocking
-                    subprocess.Popen(['explorer.exe', self.output_dir.replace('/','\\')], 
-                                   shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                except Exception as e:
-                    print(f"Warning: Could not open output directory: {e}")
-                    self.update_log(f"Warning: Could not open output directory: {e}")
 
         else:
             self.update_log('No BISTs to plot')
@@ -3112,7 +3213,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.update_log(f"Applied standard scaling: {original_size} -> (8, {new_height:.1f})")
                     
                     self.plot_figure.set_size_inches(8, new_height)
-                    self.plot_figure.tight_layout()  # Adjust layout to fit the new size
+                    if is_vs_speed_plot or self.plot_figure.get_suptitle():
+                        self.plot_figure.tight_layout(rect=[0, 0, 1, 0.93])
+                    else:
+                        self.plot_figure.tight_layout()
                     
                     self.update_log("Successfully replaced figure with returned figure")
                     
@@ -3536,9 +3640,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         figure = figure_result[0]
                     else:
                         figure = figure_result
-                elif test_type == 'rpm_binned':
-                    # Handle RPM binned plots
-                    figure_result = read_bist.plot_rx_noise_binned_rpm(plot_data['bist'], save_figs=False,
+                elif test_type in ('rpm_binned', 'pitch_binned_deg', 'pitch_binned_pct'):
+                    discrete_plot_fn = plot_data.get('plot_function', read_bist.plot_rx_noise_binned_rpm)
+                    figure_result = discrete_plot_fn(plot_data['bist'], save_figs=False,
                                                                output_dir=self.output_dir,
                                                                test_type='speed',
                                                                param=plot_data['param'],
@@ -3617,7 +3721,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log(f"Applied standard scaling: {original_size} -> (8, {new_height:.1f})")
                 
                 self.plot_figure.set_size_inches(8, new_height)
-                self.plot_figure.tight_layout(rect=[0, 0, 1, 0.92])  # Adjust layout to fit the new size
+                if is_vs_speed_plot or self.plot_figure.get_suptitle():
+                    self.plot_figure.tight_layout(rect=[0, 0, 1, 0.93])
+                else:
+                    self.plot_figure.tight_layout()
                 if plot_type == 'tx_channels':
                     read_bist._center_axes_block_in_figure(self.plot_figure, top_margin=0.88)
                 
@@ -4081,6 +4188,7 @@ def save_bist_session_config(config):
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     apply_dark_theme(app)
+    app.setWindowIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), "media", "bist.ico")))
 
     main = MainWindow()
     main.show()

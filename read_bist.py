@@ -2498,9 +2498,11 @@ def _imshow_cursor_row_col(im, event):
     return row_i, col_j
 
 
-def _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, canvas=None):
-    """Hover tooltip on the RX Noise heatmap for speed plots (SOG, test #, module #, noise).
+def _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, param_unit='SOG (kt)',
+                                       canvas=None):
+    """Hover tooltip on the RX Noise heatmap (param value, test #, module #, noise).
 
+    *param_unit* is the y-axis label for the speed/parameter subplot (e.g. ``Pitch (deg)``).
     *canvas* should be the widget canvas (e.g. ``FigureCanvasQTAgg``) when embedding in Qt so
     ``motion_notify_event`` callbacks match the canvas that receives mouse moves.
     """
@@ -2550,14 +2552,14 @@ def _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, can
                 target_canvas.draw_idle()
             return
         row_i, col_j = idx
-        sog = float(param_all[col_j])
+        param_val = float(param_all[col_j])
         noise_val = rxn_all[row_i, col_j]
         if np.ma.is_masked(noise_val):
             noise_str = 'N/A'
         else:
             noise_str = f'{float(noise_val):.2f} dB'
         tooltip.set_text(
-            f'SOG (kt): {sog:.2f}\n'
+            f'{param_unit}: {param_val:.2f}\n'
             f'Test #: {col_j + 1}\n'
             f'RX Module #: {row_i}\n'
             f'RX Noise Level: {noise_str}'
@@ -2574,8 +2576,13 @@ def attach_rx_noise_speed_hover(fig, canvas=None):
     payload = getattr(fig, '_bist_rx_noise_hover', None)
     if payload is None:
         return
-    ax_im, im, rxn_all, param_all = payload
-    _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, canvas=canvas)
+    if len(payload) >= 5:
+        ax_im, im, rxn_all, param_all, param_unit = payload
+    else:
+        ax_im, im, rxn_all, param_all = payload
+        param_unit = 'SOG (kt)'
+    _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, param_unit=param_unit,
+                                       canvas=canvas)
 
 
 def _attach_tx_channel_hover_tooltip(fig, im, tx_data, canvas=None):
@@ -3140,7 +3147,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
 
     if test_type == 'speed':
         # Defer mpl_connect when gui_embed=True: pyplot's canvas is replaced by the Qt canvas in bist_plotter.
-        fig._bist_rx_noise_hover = (ax2, im, rxn_all, np.asarray(param_all))
+        fig._bist_rx_noise_hover = (ax2, im, rxn_all, np.asarray(param_all), param_unit)
         if return_fig and not gui_embed:
             attach_rx_noise_speed_hover(fig, canvas=None)
 
@@ -3160,10 +3167,17 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     except:
         date_str = 'YYYY-MM-DD'
 
-    title_str = 'RX Noise vs. ' + test_type.capitalize() + '\n' + \
-                'EM' + rxn['model'][0] + ' (S/N ' + rxn['sn'][0] + ')\n' + \
-                'Date: ' + date_str + '\n' + \
-                'Freq: ' + rxn['frequency'][0][0]
+    try:
+        freq_title = rxn['frequency'][0][0]
+        if isinstance(freq_title, (list, tuple)):
+            freq_title = freq_title[0]
+        freq_title = str(freq_title)
+    except Exception:
+        freq_title = 'Unknown'
+
+    title_str = ('RX Noise vs. ' + test_type.capitalize() + '\n' +
+                 'EM' + rxn['model'][0] + ' (S/N ' + rxn['sn'][0] + ')\n' +
+                 'Freq: ' + freq_title + ' - Date: ' + date_str)
     try:
         fig.suptitle(title_str, fontsize=16)
     except Exception as e:
@@ -3900,6 +3914,9 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             'param_range': (np.min(all_params), np.max(all_params)),
             'frequency': freq_display
         }
+    if save_figs:
+        plt.close(fig)
+    return None
 
 
 def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed', 
@@ -4336,9 +4353,11 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                 'param_range': (param_min, param_max),
                 'frequency': freq_display
             }
+        if save_figs:
+            plt.close(fig)
         else:
             plt.show()
-            return None
+        return None
     else:
         print('No data to plot after binning')
         return None
@@ -4492,15 +4511,18 @@ def plot_rx_noise_binned_2kt_combined_frequencies(rxn_all_frequencies, save_figs
                                                    param_unit, param_adjust, param, param_lims, binned_range_lims, return_fig, bin_size=2)
 
 
-def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed', 
-                            param_unit='RPM', param_adjust=0.0, param=[], param_lims=[], binned_range_lims=[], error_bar_type='Standard Deviation', individual_type='Non-binned (Light Grey)', return_fig=False):
+def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
+                                   param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
+                                   binned_range_lims=[], error_bar_type='Standard Deviation',
+                                   individual_type='Non-binned (Light Grey)', return_fig=False,
+                                   x_padding=50.0):
     """
-    Plot RX Noise binned by RPM with file-based binning.
-    
-    All measurements from each file are grouped by that file's RPM value.
-    dB values are properly averaged in linear domain then converted back to dB.
+    Plot RX Noise with one bin per distinct parameter value (RPM, pitch, etc.).
+
+    All measurements sharing the same parameter value are grouped and averaged
+    (linear domain mean, then converted back to dB).
     """
-    print('in plot_rx_noise_binned_rpm with test_type', test_type, 'param_unit', param_unit)
+    print('in _plot_rx_noise_binned_discrete with test_type', test_type, 'param_unit', param_unit)
     
     # Get parameter values (RPM) - use same logic as regular plot
     if len(param) > 0:  # use custom parameters if given
@@ -4518,9 +4540,9 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             else:
                 n_tests = np.size(np.hstack(rxn['test']))
                 param_all = np.arange(0.0, n_tests, 1.0)
-                print('Using test indices as RPM values:', param_all)
+                print('Using test indices as parameter values:', param_all)
     else:
-        print('Error: test_type must be "speed" for RPM binned plotting')
+        print('Error: test_type must be "speed" for discrete binned plotting')
         return None
     
     # Apply parameter adjustment
@@ -4578,23 +4600,21 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     all_noise_data = np.array(all_noise_data)
     all_params = np.array(all_params)
     
-    print(f'Collected {len(all_noise_data)} measurements with RPM values: {np.unique(all_params)}')
+    print(f'Collected {len(all_noise_data)} measurements with {param_unit} values: {np.unique(all_params)}')
     
-    # For RPM binning, we need to group by file RPM values
-    # Get unique RPM values (these will be our bin centers)
-    unique_rpm_values = np.unique(all_params)
-    print(f'Unique RPM values for binning: {unique_rpm_values}')
+    # Group by distinct parameter values (one bin per loaded value)
+    unique_param_values = np.unique(all_params)
+    print(f'Unique {param_unit} values for binning: {unique_param_values}')
     
-    # Create bins based on unique RPM values
+    # Create bins based on unique parameter values
     binned_data = {}
     binned_std = {}
     binned_simple_data = {}
     binned_counts = {}
     binned_noise = {}  # Store individual dB values for each bin
     
-    for rpm_value in unique_rpm_values:
-        # Find all measurements with this RPM value
-        mask = all_params == rpm_value
+    for param_value in unique_param_values:
+        mask = all_params == param_value
         noise_dB = all_noise_data[mask]
         
         if len(noise_dB) > 0:
@@ -4615,13 +4635,14 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             # Calculate simple arithmetic mean of dB values
             simple_mean_dB = np.mean(noise_dB)
             
-            binned_data[rpm_value] = mean_dB
-            binned_std[rpm_value] = std_dB
-            binned_simple_data[rpm_value] = simple_mean_dB
-            binned_counts[rpm_value] = len(noise_dB)
-            binned_noise[rpm_value] = noise_dB.tolist()  # Store individual dB values
+            binned_data[param_value] = mean_dB
+            binned_std[param_value] = std_dB
+            binned_simple_data[param_value] = simple_mean_dB
+            binned_counts[param_value] = len(noise_dB)
+            binned_noise[param_value] = noise_dB.tolist()
             
-            print(f'  RPM {rpm_value}: {binned_counts[rpm_value]} samples, mean={mean_dB:.2f} dB, std={std_dB:.2f} dB')
+            print(f'  {param_unit} {param_value}: {binned_counts[param_value]} samples, '
+                  f'mean={mean_dB:.2f} dB, std={std_dB:.2f} dB')
     
     # Create the plot
     fig, ax = plt.subplots(figsize=(8, 9.0))
@@ -4646,7 +4667,6 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             filtered_counts = {}
             
             for i, center in enumerate(centers):
-                # Check if this RPM value is within the specified range
                 if x_min <= center <= x_max:
                     filtered_centers.append(center)
                     filtered_means.append(means[i])
@@ -4661,11 +4681,11 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             simple_means = filtered_simple_means
             binned_counts = filtered_counts
             
-            print(f'Filtered bins to RPM range {x_min} - {x_max}: {len(centers)} bins remain')
+            print(f'Filtered bins to {param_unit} range {x_min} - {x_max}: {len(centers)} bins remain')
         except (ValueError, TypeError) as e:
             print(f'Warning: Invalid param_lims values: {param_lims}, using all bins')
     
-    # Sort by RPM value for plotting
+    # Sort by parameter value for plotting
     if centers:
         sorted_indices = np.argsort(centers)
         centers = [centers[i] for i in sorted_indices]
@@ -4776,21 +4796,25 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         # Set ticks based on available data within the range
         if centers:
             ax.set_xticks(centers)
-            ax.set_xticklabels([f'{x:.0f}' for x in centers])
+            ax.set_xticklabels([f'{x:g}' for x in centers])
         else:
-            ax.set_xticks(unique_rpm_values)
-            ax.set_xticklabels([f'{x:.0f}' for x in unique_rpm_values])
+            ax.set_xticks(unique_param_values)
+            ax.set_xticklabels([f'{x:g}' for x in unique_param_values])
     else:
-        # Use data-based limits
         if centers:
-            ax.set_xlim(min(centers) - 50, max(centers) + 50)  # Add some padding around RPM values
+            if x_padding is None:
+                span = max(centers) - min(centers)
+                pad = max(1.0, span * 0.1) if span > 0 else 2.0
+            else:
+                pad = x_padding
+            ax.set_xlim(min(centers) - pad, max(centers) + pad)
             ax.set_xticks(centers)
-            ax.set_xticklabels([f'{x:.0f}' for x in centers])
+            ax.set_xticklabels([f'{x:g}' for x in centers])
         else:
-            # Fallback if no data
-            ax.set_xlim(-50, max(unique_rpm_values) + 50)
-            ax.set_xticks(unique_rpm_values)
-            ax.set_xticklabels([f'{x:.0f}' for x in unique_rpm_values])
+            pad = x_padding if x_padding is not None else 2.0
+            ax.set_xlim(-pad, max(unique_param_values) + pad)
+            ax.set_xticks(unique_param_values)
+            ax.set_xticklabels([f'{x:g}' for x in unique_param_values])
     
     # Get system information for title
     model = rxn.get('model', ['Unknown'])[0] if rxn.get('model') else 'Unknown'
@@ -4817,13 +4841,13 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     # Calculate total tests
     total_tests = sum(binned_counts.values()) if binned_counts else 0
     
-    title_str = (f'RX Noise vs RPM (Binned)\n' + 
-                f'{ship_display}EM{model} (S/N {sn})\n' + 
-                f'{description_display}{date_display}\n' + 
+    title_str = (f'RX Noise vs {param_unit} (Binned)\n' +
+                f'{ship_display}EM{model} (S/N {sn})\n' +
+                f'{description_display}{date_display}\n' +
                 f'Freq: {freq_display} - Total Tests: {total_tests}')
     
     ax.set_title(title_str, fontsize=12, fontweight='bold', pad=20)
-    ax.set_xlabel('RPM', fontsize=12, fontweight='bold')
+    ax.set_xlabel(param_unit, fontsize=12, fontweight='bold')
     ax.set_ylabel('RX Noise Level (dB)', fontsize=12, fontweight='bold')
     ax.legend(loc='upper left', fontsize=10)
     ax.grid(True, alpha=0.3)
@@ -4842,7 +4866,9 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         
         # Clean frequency display for filename (remove brackets and other unwanted characters)
         clean_freq_display = freq_display.replace(" ", "_").replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("'", "")
-        fig_name = f'RX_noise_binned_RPM_vs_RXnoise_{error_suffix}{bin_suffix}_EM{model}_SN_{sn}_{clean_date_str}_{clean_freq_display}.png'
+        param_token = param_unit.replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'pct')
+        fig_name = (f'RX_noise_binned_{param_token}_vs_RXnoise_{error_suffix}{bin_suffix}_'
+                    f'EM{model}_SN_{sn}_{clean_date_str}_{clean_freq_display}.png')
         print('Saving', fig_name)
         fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
         
@@ -4860,6 +4886,32 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             'param_range': (np.min(all_params), np.max(all_params)),
             'frequency': freq_display
         }
+    if save_figs:
+        plt.close(fig)
     else:
         plt.show()
-        return None
+    return None
+
+
+def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
+                             param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
+                             binned_range_lims=[], error_bar_type='Standard Deviation',
+                             individual_type='Non-binned (Light Grey)', return_fig=False):
+    """Plot RX Noise binned by distinct RPM values."""
+    return _plot_rx_noise_binned_discrete(
+        rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
+        param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
+        binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
+        individual_type=individual_type, return_fig=return_fig, x_padding=50.0)
+
+
+def plot_rx_noise_binned_pitch(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
+                               param_unit='Pitch (deg)', param_adjust=0.0, param=[], param_lims=[],
+                               binned_range_lims=[], error_bar_type='Standard Deviation',
+                               individual_type='Non-binned (Light Grey)', return_fig=False):
+    """Plot RX Noise binned by distinct pitch values (deg or %)."""
+    return _plot_rx_noise_binned_discrete(
+        rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
+        param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
+        binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
+        individual_type=individual_type, return_fig=return_fig, x_padding=None)

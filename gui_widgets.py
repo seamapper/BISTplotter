@@ -123,20 +123,91 @@ class Label(QtWidgets.QLabel):
         self.setAlignment(alignment)
 
 
+def set_equal_horizontal_width(*widgets):
+    """Let push buttons in a horizontal row share parent width equally."""
+    for w in widgets:
+        if not isinstance(w, QtWidgets.QPushButton):
+            continue
+        hint = w.sizeHint()
+        min_w = max(w.minimumWidth(), hint.width(), 1)
+        min_h = max(w.minimumHeight(), hint.height(), 20)
+        w.setMinimumSize(min_w, min_h)
+        w.setMaximumHeight(min_h)
+        w.setMaximumWidth(16777215)
+        w.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+
+
+def configure_horizontal_expanding(widget):
+    """Let inputs and wrapped labels grow to fill a horizontal row."""
+    if isinstance(widget, Label):
+        if widget.wordWrap():
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(16777215)
+            widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+        return
+    if isinstance(widget, (QtWidgets.QCheckBox, QtWidgets.QRadioButton, QtWidgets.QPushButton)):
+        return
+
+    hint = widget.sizeHint()
+    min_w = max(widget.minimumWidth(), hint.width(), 1)
+    min_h = max(widget.minimumHeight(), hint.height(), 20)
+    if widget.maximumWidth() == widget.minimumWidth() and widget.minimumWidth() > 0:
+        min_w = max(min_w, widget.minimumWidth())
+    widget.setMinimumSize(min_w, min_h)
+    widget.setMaximumWidth(16777215)
+    if not isinstance(widget, QtWidgets.QTextEdit):
+        widget.setMaximumHeight(min_h)
+    widget.setSizePolicy(
+        QtWidgets.QSizePolicy.Policy.Expanding,
+        QtWidgets.QSizePolicy.Policy.Fixed,
+    )
+
+
+def _horizontal_row_stretch(widget):
+    if isinstance(widget, Label):
+        return 1 if widget.wordWrap() else 0
+    if isinstance(widget, (QtWidgets.QComboBox, QtWidgets.QLineEdit,
+                           QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit,
+                           QtWidgets.QDoubleSpinBox, QtWidgets.QSpinBox)):
+        return 1
+    return 0
+
+
 class BoxLayout(QtWidgets.QVBoxLayout):
     # generic class to add widgets or layouts oriented in layout_dir
-    def __init__(self, items=[], layout_dir='v', add_stretch=False, alignment=(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)):
+    def __init__(self, items=[], layout_dir='v', add_stretch=False,
+                 alignment=(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                 equal_width=False, full_width=False):
         super(BoxLayout, self).__init__()
         # set direction based on logical of layout_dir = top to bottom ('v') or left to right ('h')
         self.setDirection([QtWidgets.QBoxLayout.Direction.TopToBottom, QtWidgets.QBoxLayout.Direction.LeftToRight][layout_dir == 'h'])
 
         for i in items:
             if isinstance(i, QtWidgets.QWidget):
-                self.addWidget(i)
-                self.setAlignment(alignment)
+                if equal_width and layout_dir == 'h':
+                    set_equal_horizontal_width(i)
+                    self.addWidget(i, 1)
+                elif full_width and layout_dir == 'h':
+                    configure_horizontal_expanding(i)
+                    self.addWidget(i, _horizontal_row_stretch(i))
+                elif full_width and layout_dir == 'v':
+                    if isinstance(i, QtWidgets.QGroupBox):
+                        i.setSizePolicy(
+                            QtWidgets.QSizePolicy.Policy.Expanding,
+                            QtWidgets.QSizePolicy.Policy.Preferred,
+                        )
+                    self.addWidget(i)
+                else:
+                    self.addWidget(i, 0, alignment)
             else:
+                # Nested layouts span the full width of a vertical parent
                 self.addLayout(i)
-                self.setAlignment(alignment)
 
         if add_stretch:
             self.addStretch()
