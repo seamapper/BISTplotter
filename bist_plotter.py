@@ -222,7 +222,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(
             'UNH/CCOM-JHC & MAC - BIST Plotter v.%s - kjerram@ccom.unh.edu & pjohnson@ccom.unh.edu' % __version__
         )
-        self.setWindowIcon(QtGui.QIcon(os.path.join(self.media_path, "bist.ico")))
+        self.setWindowIcon(QtGui.QIcon(os.path.join(self.media_path, "mac.ico")))
 
         if os.name == 'nt':  # necessary to explicitly set taskbar icon
             import ctypes
@@ -262,6 +262,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.swell_dir_default = '999'
         self.swell_dir_message = True
         self.current_default = '0'
+        self._ignore_sis5_user_disabled_on_sog = False
+        self._ignore_sis5_syncing = False
+        self._sn_user_entered = False
+        self._sn_programmatic_update = False
 
         # Navigation controls for multiple charts
         self.all_figures = []  # Store all frequency plots
@@ -303,19 +307,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot_bist_btn.clicked.connect(self.plot_bist)
         # self.custom_info_chk.stateChanged(self.custom_info_gb.setEnabled(self.custom_info_chk.isChecked()))
 
-        # set up user system info actions
-        self.model_cbox.activated.connect(self.update_system_info)
-        self.sn_tb.textChanged.connect(self.update_system_info)
-        self.ship_tb.textChanged.connect(self.update_system_info)
-        self.date_tb.textChanged.connect(self.update_system_info)
+        # System info: commit on Enter (text) or dropdown selection (model); then refresh plots
+        self.model_cbox.activated.connect(self.on_system_info_committed)
+        self.sn_tb.returnPressed.connect(self.on_system_info_committed)
+        self.sn_tb.editingFinished.connect(self._on_sn_user_edited)
+        self.ship_tb.returnPressed.connect(self.on_system_info_committed)
+        self.cruise_tb.returnPressed.connect(self.on_system_info_committed)
+        self.date_tb.returnPressed.connect(self.on_system_info_committed)
         self.warn_user_chk.stateChanged.connect(self.verify_system_info)
-        
-        # Connect controls to auto-update plot
-        self.model_cbox.activated.connect(self.auto_update_plot)  # Model dropdown updates immediately
-        self.sn_tb.returnPressed.connect(self.trigger_auto_update)    # Text fields update on Enter
-        self.ship_tb.returnPressed.connect(self.trigger_auto_update)
-        self.date_tb.returnPressed.connect(self.trigger_auto_update)
-        self.cruise_tb.returnPressed.connect(self.trigger_auto_update)
 
         self.type_cbox.activated.connect(self.update_buttons)
         self.type_cbox.currentTextChanged.connect(self.update_buttons)  # Also handle text changes
@@ -323,6 +322,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.noise_test_type_cbox.currentTextChanged.connect(self.auto_plot_noise_type)
         # self.prm_unit_cbox.activated.connect(self.update_buttons)
         self.prm_unit_cbox.activated.connect(self.update_noise_param_unit)
+        self.prm_unit_cbox.currentTextChanged.connect(self.update_noise_param_unit)
+        self.ignore_sis5_speeds_chk.stateChanged.connect(self._on_ignore_sis5_user_toggle)
         self.prm_str_tb.textChanged.connect(self.update_noise_param_string)
         
         # Connect RX Noise Testing controls for auto-update
@@ -930,11 +931,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 break
         if unit_index >= 0:
             self.prm_unit_cbox.setCurrentIndex(unit_index)
+            self.update_noise_param_unit()
         else:
             self.update_log(f'Warning: {unit_name} option not found in parameter unit dropdown')
 
     def update_noise_param_string(self):  # update the dict of strings for parsing noise parameters from filenames
         self.noise_params[self.prm_unit_cbox.currentText()] = self.prm_str_tb.text()
+
+    def _on_ignore_sis5_user_toggle(self, _state):
+        """Remember when the user turns off Ignore SIS5 Speeds while SOG (kt) is selected."""
+        if self._ignore_sis5_syncing:
+            return
+        if self.prm_unit_cbox.currentText() == 'SOG (kt)':
+            self._ignore_sis5_user_disabled_on_sog = not self.ignore_sis5_speeds_chk.isChecked()
+
+    def _apply_ignore_sis5_for_test_unit(self):
+        """Check Ignore SIS5 Speeds for non-SOG units; restore on SOG unless user cleared it."""
+        is_sog = self.prm_unit_cbox.currentText() == 'SOG (kt)'
+        should_check = (not is_sog) or not self._ignore_sis5_user_disabled_on_sog
+        self._ignore_sis5_syncing = True
+        self.ignore_sis5_speeds_chk.setChecked(should_check)
+        self._ignore_sis5_syncing = False
 
     def update_noise_param_unit(self):  # update text box with custom string for noise test unit
         self.prm_str_tb.setText(self.noise_params[self.prm_unit_cbox.currentText()])
@@ -942,6 +959,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # enable current adjustment input fields if speed through water is selected
         self.current_tb.setEnabled('stw' in self.prm_unit_cbox.currentText().lower())
         self.current_dir_cbox.setEnabled('stw' in self.prm_unit_cbox.currentText().lower())
+        self._apply_ignore_sis5_for_test_unit()
 
     def update_buttons(self):  # update buttons/options from user actions
         if self.type_cbox.currentIndex() == 2:  # noise testing
@@ -1104,6 +1122,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.get_current_file_list()  # update self.file_list and file count
         self.current_fnum_lbl.setText('Current file count: ' + str(len(self.filenames)))
         if fnames_new:
+            self._sn_user_entered = False
+            self.sn_updated = False
             self._clear_export_button_highlight()
 
     def show_file_paths(self):
@@ -1339,6 +1359,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_session_data(self):  # load saved session data from file
         try:
+            had_plots = bool(getattr(self, 'all_figures', None) and len(self.all_figures) > 0)
+            sys_info_before = self._system_info_snapshot() if had_plots else None
+
             config = load_bist_session_config()
             
             # Debug: Print what we're loading
@@ -1346,7 +1369,9 @@ class MainWindow(QtWidgets.QMainWindow):
             
             # Load saved values if they exist (these will be used as fallbacks)
             if 'serial_number' in config and config['serial_number']:
+                self._sn_programmatic_update = True
                 self.sn_tb.setText(config['serial_number'])
+                self._sn_programmatic_update = False
             if 'ship_name' in config and config['ship_name']:
                 self.ship_tb.setText(config['ship_name'])
             if 'description' in config and config['description']:
@@ -1364,7 +1389,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if 'x_axis_enabled' in config:
                 self.prm_plot_lim_gb.setChecked(config['x_axis_enabled'])
                 self.update_log(f'Debug: Setting X-axis checkbox to: {config["x_axis_enabled"]}')
-                
+
+            self.refresh_system_info_from_ui()
+            if had_plots and self._system_info_snapshot() != sys_info_before:
+                self.update_log('System information changed; updating displayed plots...')
+                self.auto_update_plots_for_system_info()
+
             self.update_log('Session data loaded successfully')
         except Exception as e:
             self.update_log(f'Error loading session data: {str(e)}')
@@ -1401,6 +1431,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.model_updated = False
             self.ship_name_updated = False
             self.sn_updated = False
+            self._sn_user_entered = False
             self.swell_dir_updated = False
             self.swell_dir_tb.setText(self.swell_dir_default)
             self.swell_dir_message = True
@@ -1544,14 +1575,23 @@ class MainWindow(QtWidgets.QMainWindow):
         for f in range(len(self.filenames)):
             self.file_list.item(f).setSelected(False)  # clear any pre-selected items before re-selecting verified ones
 
-    def update_system_info(self):  # get updated/stripped model, serial number, ship, cruise, and date
-        self.model_number = self.model_cbox.currentText().replace('EM', '').strip()  # get model from name list
-        self.sn = self.sn_tb.text().strip()
-        self.ship_name = self.ship_tb.text().strip()
-        self.cruise_name = self.cruise_tb.text().strip()
-        self.date_str = self.date_tb.text().strip()
+    def _system_info_snapshot(self):
+        """Tuple of current system-information field values for change detection."""
+        return (
+            self.model_cbox.currentText().replace('EM', '').strip(),
+            self.sn_tb.text().strip(),
+            self.ship_tb.text().strip(),
+            self.cruise_tb.text().strip(),
+            self.date_tb.text().strip(),
+        )
 
-        # Reset field color only for system-info widgets (not Plot Selected / other buttons)
+    def refresh_system_info_from_ui(self):
+        """Read system information fields into instance attributes."""
+        self.model_number, self.sn, self.ship_name, self.cruise_name, self.date_str = self._system_info_snapshot()
+
+    def update_system_info(self):
+        """Refresh stored system info; mark the edited field cyan when user commits a value."""
+        self.refresh_system_info_from_ui()
         sender = self.sender()
         sys_info_widgets = (self.model_cbox, self.sn_tb, self.ship_tb, self.cruise_tb, self.date_tb)
         if sender not in sys_info_widgets:
@@ -1560,13 +1600,36 @@ class MainWindow(QtWidgets.QMainWindow):
         sender.setStyleSheet('color: cyan')
         if sender.objectName() in self.missing_fields:
             self.missing_fields.remove(sender.objectName())
-            # self.plot_bist_btn.setEnabled(False)
+
+    def _on_sn_user_edited(self):
+        """Remember that the user set the serial number (not an auto-fill from BIST files)."""
+        if not getattr(self, '_sn_programmatic_update', False):
+            self._sn_user_entered = True
+
+    def on_system_info_committed(self):
+        """Apply system info after Enter or model selection; replot if plots are already shown."""
+        if self.sender() == self.sn_tb:
+            self._sn_user_entered = True
+        self.update_system_info()
+        self.auto_update_plots_for_system_info()
+
+    def auto_update_plots_for_system_info(self):
+        """Re-run plotting with updated system info (all chart types)."""
+        if not getattr(self, 'all_figures', None) or len(self.all_figures) == 0:
+            return
+        chart_index = self.current_chart_index
+        self.update_log('Updating plots after system information change...')
+        self.plot_bist()
+        if self.all_figures and 0 <= chart_index < self.total_charts:
+            self.current_chart_index = chart_index
+            self.display_current_frequency()
+            self.update_navigation_controls()
+        if self.all_figures:
+            self._update_export_button(mark_pending=True)
 
     def trigger_auto_update(self):
-        """Trigger auto-update after updating system info from text field"""
-        # First update the system info to get the latest values
-        self.update_system_info()
-        # Then trigger the auto-update
+        """Trigger auto-update for RX noise / plot parameter fields (Enter key)."""
+        self.refresh_system_info_from_ui()
         self.auto_update_plot()
     
     def auto_plot_noise_type(self):
@@ -1755,7 +1818,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.missing_fields = []
         self.conflicting_fields = []
         self.model_updated = False
-        self.sn_updated = False
+        if not self._sn_user_entered:
+            self.sn_updated = False
         self.date_updated = False
 
         fnames_sel = [self.file_list.item(f).data(1) for f in range(self.file_list.count())
@@ -1811,8 +1875,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.conflicting_fields.append('model')
 
             if sys_info['sn']:
-                if not self.sn_updated:  # update serial number with first SN found
+                if not self._sn_user_entered and not self.sn_updated:
+                    self._sn_programmatic_update = True
                     self.sn_tb.setText(str(sys_info['sn']))
+                    self._sn_programmatic_update = False
                     self.update_log('Updated serial number to ' + self.sn_tb.text() + ' (first S/N found)')
 
                     # SIS 5 only: explain PU- vs FN- prefix in activity log
@@ -1824,7 +1890,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
                     self.sn_updated = True
 
-                elif sys_info['sn'] != self.sn_tb.text().strip():  # serial number was updated but new SN found
+                elif sys_info['sn'] != self.sn_tb.text().strip():
                     self.update_log('***WARNING: New serial number (' + sys_info['sn'] + ') detected in ' + fname_str)
                     self.conflicting_fields.append('sn')
 
@@ -1871,7 +1937,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.update_log('Plotting selected ' + bist_test_type + ' BIST files')
         self.get_current_file_list()
         self.plot_bist_btn.setStyleSheet('')
-        self.update_system_info()
+        self.refresh_system_info_from_ui()
         
         # Clear previous navigation state
         self.all_figures = []
@@ -4188,7 +4254,7 @@ def save_bist_session_config(config):
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     apply_dark_theme(app)
-    app.setWindowIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), "media", "bist.ico")))
+    app.setWindowIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), "media", "mac.ico")))
 
     main = MainWindow()
     main.show()

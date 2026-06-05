@@ -3492,7 +3492,17 @@ def check_system_info(fname, sis_version=int(4)):
 
     return sys_info
 
-# Add the new binned plot function at the end of the file
+
+def _binned_n_label_y(mean, yerr, means_for_range, y_max_lim=None):
+    """Y coordinate for n= count labels, placed above the error bar cap."""
+    data_range = max(means_for_range) - min(means_for_range) if len(means_for_range) else 0.0
+    offset = min(0.05, data_range * 0.2) if data_range > 0 else 0.02
+    label_y = mean + yerr + offset
+    if y_max_lim is not None and label_y > y_max_lim - offset:
+        label_y = y_max_lim - offset
+    return label_y
+
+
 def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed', 
                             param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[], binned_range_lims=[], error_bar_type='Standard Deviation', individual_type='Non-binned (Light Grey)', return_fig=False):
     """
@@ -3768,35 +3778,14 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     ax.plot(binned_centers, binned_simple_means, 'o-', color='green', 
              markersize=6, linewidth=2, label='Arithmetic Mean', zorder=2)
     
-    # Add text labels showing number of tests in each bin (using filtered data)
+    # Add text labels showing number of tests in each bin (above error bars)
+    y_max_lim = float(binned_range_lims[1]) if len(binned_range_lims) == 2 else None
     for i, center in enumerate(binned_centers):
         count = binned_counts[center]
-        
-        # Calculate offset based on the data range - increased for better visibility
-        data_range = max(binned_means) - min(binned_means)
-        if data_range > 0:
-            # Use a larger offset proportional to the data range (max 0.05)
-            offset = min(0.05, data_range * 0.2)
-        else:
-            offset = 0.02  # Larger fixed offset if no range
-        
-        # Position labels above the maximum individual measurement for this bin
-        if center in binned_noise and binned_counts[center] > 0:
-            max_individual = max(binned_noise[center])
-            label_y = max_individual + offset
-        else:
-            # Fallback to above mean + std if no individual data available
-            label_y = binned_means[i] + binned_std[i] + offset
-        
-        # If Y-axis limits are set, ensure label doesn't go above the plot
-        if len(binned_range_lims) == 2:
-            y_max = float(binned_range_lims[1])
-            # Ensure label is within plot bounds with a very small margin
-            if label_y > y_max - offset:  # Use the same small offset as margin
-                label_y = y_max - offset
-        
-        ax.text(center, label_y, 
-               f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        label_y = _binned_n_label_y(
+            binned_means[i], binned_std[i], binned_means, y_max_lim=y_max_lim)
+        ax.text(center, label_y,
+                f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
     
     # Set labels and title
     ax.set_xlabel(f'{param_unit}', fontsize=14)
@@ -4225,33 +4214,13 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         ax.plot(centers, simple_means, 'o-', color='green', 
                  markersize=6, linewidth=2, label='Arithmetic Mean', zorder=2)
         
-        # Add text labels showing number of tests in each bin (using filtered data)
-        for center, mean, count in zip(centers, means, [binned_counts[c] for c in centers]):
-            # Calculate offset based on the data range - increased for better visibility
-            data_range = max(means) - min(means)
-            if data_range > 0:
-                # Use a larger offset proportional to the data range (max 0.05)
-                offset = min(0.05, data_range * 0.2)
-            else:
-                offset = 0.02  # Larger fixed offset if no range
-            
-            # Position labels above the maximum individual measurement for this bin
-            if center in binned_noise and binned_counts[center] > 0:
-                max_individual = max(binned_noise[center])
-                label_y = max_individual + offset
-            else:
-                # Fallback to above mean + std if no individual data available
-                label_y = mean + stds[centers.index(center)] + offset
-            
-            # If Y-axis limits are set, ensure label doesn't go above the plot
-            if len(binned_range_lims) == 2:
-                y_max = float(binned_range_lims[1])
-                # Ensure label is within plot bounds with a very small margin
-                if label_y > y_max - offset:  # Use the same small offset as margin
-                    label_y = y_max - offset
-            
-                ax.text(center, label_y, 
-                       f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        # Add text labels showing number of tests in each bin (above error bars)
+        y_max_lim = float(binned_range_lims[1]) if len(binned_range_lims) == 2 else None
+        for i, center in enumerate(centers):
+            count = binned_counts[center]
+            label_y = _binned_n_label_y(means[i], stds[i], means, y_max_lim=y_max_lim)
+            ax.text(center, label_y,
+                    f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
         
         # Set labels and title
         ax.set_xlabel(f'{param_unit}', fontsize=12)
@@ -4763,20 +4732,11 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
         ax.plot(centers, simple_means, 'o-', color='green', 
                 markersize=6, linewidth=2, label='Arithmetic Mean', zorder=2)
         
-        # Add text labels showing number of tests in each bin (using filtered data)
+        # Add text labels showing number of tests in each bin (above error bars)
+        y_max_lim = float(binned_range_lims[1]) if len(binned_range_lims) == 2 else None
         for i, center in enumerate(centers):
             count = binned_counts[center]
-            
-            # Find the maximum individual measurement for this bin
-            if center in binned_noise and binned_noise[center]:
-                max_individual = max(binned_noise[center])
-            else:
-                max_individual = means[i] if i < len(means) else 0
-            
-            # Position label above the maximum individual measurement
-            offset = 1.0  # Adjust this value to control label position
-            label_y = max_individual + offset
-            
+            label_y = _binned_n_label_y(means[i], stds[i], means, y_max_lim=y_max_lim)
             ax.text(center, label_y, f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
     
     # Set Y-axis limits if specified
