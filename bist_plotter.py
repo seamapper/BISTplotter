@@ -1272,6 +1272,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if rx_oos:
                     self.update_log(f'Wrote {len(rx_oos)} RX array out-of-spec report(s)')
                 read_bist.plot_rx_z(bist, save_figs=True, output_dir=output_dir)
+                read_bist.plot_rx_z_line_heatmap(bist, save_figs=True, output_dir=output_dir)
                 read_bist.plot_rx_z_history(bist, save_figs=True, output_dir=output_dir)
 
             elif bist_test_type == self.bist_list[3]:  # RX Noise
@@ -2540,7 +2541,37 @@ class MainWindow(QtWidgets.QMainWindow):
                         plot_name = f"RX Channels Heatmap - {fname_str} - {freq_str} kHz"
                         self.freq_list.append(plot_name)
                     
-                    # Generate the second plot (history) using plot_rx_z_history
+                    # Generate the second plot (line + heatmap) using plot_rx_z_line_heatmap
+                    lineheat_figure = read_bist.plot_rx_z_line_heatmap(
+                        bist,
+                        save_figs=False,
+                        output_dir=self.output_dir,
+                        return_fig=True,
+                        gui_mode=True
+                    )
+
+                    if lineheat_figure:
+                        # Store the data needed to regenerate this plot
+                        plot_data = {
+                            'bist': bist,
+                            'plot_type': 'rx_channels',
+                            'plot_subtype': 'line_heatmap'
+                        }
+                        self.frequency_data.append(plot_data)
+
+                        # Apply font size adjustments for GUI display
+                        lineheat_figure = self.apply_gui_font_sizes(lineheat_figure)
+
+                        self.all_figures.append(lineheat_figure)
+                        self.total_charts += 1
+
+                        # Create a descriptive name for this plot
+                        fname_str = bist['filename'][0][bist['filename'][0].rfind("/") + 1:-4]
+                        freq_str = str(bist['freq_range'][file_index][test_index][0]) if n_freq > 0 else "Unknown"
+                        plot_name = f"RX Channels Line+Heatmap - {fname_str} - {freq_str} kHz"
+                        self.freq_list.append(plot_name)
+
+                    # Generate the third plot (history) using plot_rx_z_history
                     history_figure = read_bist.plot_rx_z_history(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
                     
                     if history_figure:
@@ -2560,6 +2591,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         
                         # Create a descriptive name for this plot
                         fname_str = bist['filename'][0][bist['filename'][0].rfind("/") + 1:-4]
+                        freq_str = str(bist['freq_range'][file_index][test_index][0]) if n_freq > 0 else "Unknown"
                         plot_name = f"RX Channels History - {fname_str} - {freq_str} kHz"
                         self.freq_list.append(plot_name)
                         
@@ -3672,6 +3704,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         # Handle specific plot subtypes (heatmap vs history)
                         if plot_data['plot_subtype'] == 'heatmap':
                             figure = read_bist.plot_rx_z(plot_data['bist'], save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
+                        elif plot_data['plot_subtype'] == 'line_heatmap':
+                            figure = read_bist.plot_rx_z_line_heatmap(plot_data['bist'], save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
                         elif plot_data['plot_subtype'] == 'history':
                             figure = read_bist.plot_rx_z_history(plot_data['bist'], save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
                         else:

@@ -1006,6 +1006,186 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
         return None  # No figures were generated
 
 
+def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_mode=False):
+    """
+    RX Channels plot styled like TX plot_style=2:
+    - Top subplot: one line per RX board across RX channel index
+    - Bottom subplot: RX board x RX channel heatmap (receiver grid)
+    """
+
+    # Define font sizes based on mode (match plot_tx_z style 2)
+    if gui_mode:
+        title_fontsize = 8
+        label_fontsize = 10
+        tick_fontsize = 5
+        cbar_fontsize = 6
+        suptitle_fontsize = 8
+        axfsize = 8
+    else:
+        title_fontsize = 20
+        label_fontsize = 16
+        tick_fontsize = 16
+        cbar_fontsize = 16
+        suptitle_fontsize = 20
+        axfsize = 20
+
+    # Track generated figures for return_fig=True
+    for i in range(len(z['filename'])):
+        is_2040 = z['model'][i] in ['2040', '2045', '2040P']
+        fname_str = z['filename'][i]
+        fname_str = fname_str[fname_str.rfind("/") + 1:-4]
+
+        for t in z['rx'][i].keys():
+            n_freq = len(z['freq_range'][i][t])  # assumed all tests cover the same frequency count
+
+            for f in range(n_freq):
+                # Resolve receiver plot limits (vmin/vmax) from parsed file data if available
+                rx_rec_min = 600
+                rx_rec_max = 1000
+                try:
+                    rx_rec_min, rx_rec_max = _pair_limits(z['rx_limits'][i][t][f])
+                except Exception:
+                    pass
+
+                rx_data = z['rx'][i][t][f]  # expected shape: (n_rx_boards, n_rx_channels)
+                n_rx_boards = np.shape(rx_data)[0]
+                n_rx_channels = np.shape(rx_data)[1]
+
+                # Frequency display formatting (matches plot_rx_z)
+                freq_val = z['freq_range'][i][t][f].replace('.0', '')
+                freq_str = freq_val + ' kHz'
+                freq_str = freq_str.replace('(High) kHz', 'kHz (High)').replace('(Low) kHz', 'kHz (Low)')
+
+                test_time_str = datetime.datetime.strftime(
+                    z['test_datetime'][i][t], '%Y/%m/%d %H:%M:%S.%f'
+                )[:-3]
+
+                title_str = (
+                    'RX Channels BIST\n'
+                    + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n'
+                    + test_time_str + '\nFrequency: ' + freq_str
+                )
+
+                if is_2040:
+                    value_label = r'Signal Amplitude [dB], f=' + freq_val + ' kHz'
+                else:
+                    value_label = r'Impedance ($\Omega$, f=' + freq_val + ' kHz)'
+
+                # set x ticks and labels on top of subplots to match TX style 2
+                plt.rcParams['xtick.bottom'] = plt.rcParams['xtick.labelbottom'] = False
+                plt.rcParams['xtick.top'] = plt.rcParams['xtick.labeltop'] = True
+
+                subplot_height_ratio = 1.5
+                fig = plt.figure()
+                fig.set_size_inches(11, 16)
+                gs = gridspec.GridSpec(2, 1, height_ratios=[1, subplot_height_ratio], hspace=0.15)
+
+                # top plot: line plot for each board across all channels
+                ax1 = plt.subplot(gs[0])
+                zrx_channel = np.tile(np.arange(0, n_rx_channels), [n_rx_boards, 1])
+                ax1.plot(zrx_channel.transpose(), rx_data.transpose())
+
+                ax1.set_xlim(-0.5, n_rx_channels - 0.5)
+                ax1.set_ylim(rx_rec_min, rx_rec_max)
+                ax1.set(aspect='auto', adjustable='box')
+
+                # bottom plot: grid plot
+                ax2 = plt.subplot(gs[1])
+                rx_cmap = plt.get_cmap('rainbow').copy()
+                rx_cmap.set_under('black')
+                rx_cmap.set_over('magenta')
+
+                rx_data_min = np.nanmin(rx_data)
+                rx_data_max = np.nanmax(rx_data)
+                rx_extend = 'neither'
+                if rx_data_min < rx_rec_min and rx_data_max > rx_rec_max:
+                    rx_extend = 'both'
+                elif rx_data_min < rx_rec_min:
+                    rx_extend = 'min'
+                elif rx_data_max > rx_rec_max:
+                    rx_extend = 'max'
+
+                im = ax2.imshow(rx_data, cmap=rx_cmap, vmin=rx_rec_min, vmax=rx_rec_max)
+                ax2.set_aspect('equal')
+                ax2.invert_yaxis()
+
+                # set axis ticks for each subplot (match TX style 2, sized to actual channel count)
+                dx_tick = 5
+                dy_tick = 1
+                y_tick_step = 1 if is_2040 else 10
+                y_minor_step = 1 if is_2040 else 5
+
+                x_major_ticks = np.arange(0, n_rx_channels, dx_tick)
+                x_tick_labels = [str(int(x)) for x in x_major_ticks]
+                y_major_ticks = np.arange(rx_rec_min, rx_rec_max + 1, y_tick_step)
+                y_tick_labels = [str(int(y)) for y in y_major_ticks]
+                board_ticks = np.arange(0, n_rx_boards, dy_tick)
+                board_tick_labels = [str(int(y)) for y in board_ticks]
+
+                for ax in (ax1, ax2):
+                    ax.set_xticks(x_major_ticks)
+                    ax.set_xticklabels(x_tick_labels, fontsize=axfsize)
+
+                ax1.set_yticks(y_major_ticks)
+                ax1.set_yticklabels(y_tick_labels, fontsize=axfsize)
+                ax2.set_yticks(board_ticks)
+                ax2.set_yticklabels(board_tick_labels, fontsize=axfsize)
+
+                ax1.set_xticks(np.arange(0, n_rx_channels + 1, dx_tick), minor=True)
+                ax1.set_yticks(np.arange(rx_rec_min, rx_rec_max + 1, y_minor_step), minor=True)
+                ax2.set_xticks(np.arange(-0.5, n_rx_channels + 0.5, 1), minor=True)
+                ax2.set_yticks(np.arange(-0.5, n_rx_boards + 0.5, 1), minor=True)
+                ax2.set_ylim(n_rx_boards - 0.5, -0.5)
+
+                ax1.grid(which='minor', color='k', linewidth=1)
+                ax2.grid(which='minor', color='k', linewidth=1)
+
+                ax1.set_xlabel('RX Channel (index starts at 0)', fontsize=axfsize)
+                ax1.set_ylabel(value_label, fontsize=axfsize)
+                ax1.xaxis.set_label_position('top')
+                ax2.set_ylabel('RX Board (index starts at 0)', fontsize=axfsize)
+                ax2.set_xlabel('RX Channel (index starts at 0)', fontsize=axfsize)
+                ax2.xaxis.set_label_position('top')
+
+                fig._bist_rx_channel_hover = (ax2, im, rx_data)
+
+                # Extra pad below heatmap: RX boards are fewer rows than TX slots
+                cbar = fig.colorbar(im, orientation='horizontal', ax=ax2, fraction=0.05, pad=0.14,
+                                    extend=rx_extend)
+                cbar.set_label(value_label, fontsize=cbar_fontsize)
+
+                fig.suptitle(title_str, fontsize=suptitle_fontsize)
+                fig.tight_layout()
+                # Four-line RX title needs more headroom than TX style 2 (three lines)
+                fig.subplots_adjust(top=0.81, bottom=0.08)
+
+                if save_figs:
+                    # Mirror plot_rx_z naming convention as closely as possible
+                    fig_name = (
+                        'RX_Z_LINEHEAT_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_' +
+                        test_time_str.replace('/', '').replace(':', '').replace('.', '_').replace(' ', '_') +
+                        '_freq_' + freq_str.replace(' ', '_').replace('(', '').replace(')', '') + '.png'
+                    )
+                    fig.savefig(os.path.join(output_dir, fig_name), dpi=100, bbox_inches='tight')
+
+                if return_fig:
+                    if not hasattr(plot_rx_z_line_heatmap, 'figures'):
+                        plot_rx_z_line_heatmap.figures = []
+                    plot_rx_z_line_heatmap.figures.append(fig)
+                else:
+                    plt.close()
+
+    # Return all figures if requested
+    if return_fig and hasattr(plot_rx_z_line_heatmap, 'figures'):
+        figures = plot_rx_z_line_heatmap.figures.copy()
+        plot_rx_z_line_heatmap.figures = []
+        if len(figures) == 1:
+            return figures[0]
+        return figures
+    elif return_fig:
+        return None
+
+
 def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_mode=False):
     # plot lines of all zrx values colored by year to match historic Multibeam Advisory Committee plots
     # new version accommodating multiple freq and tests per file
