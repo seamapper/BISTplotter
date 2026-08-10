@@ -1110,15 +1110,27 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
                 ax2.invert_yaxis()
 
                 # set axis ticks for each subplot (match TX style 2, sized to actual channel count)
+                # Adaptive impedance tick step: default 10 is too coarse for kohm ranges (e.g. 5–11, 10.5–17.5)
                 dx_tick = 5
                 dy_tick = 1
-                y_tick_step = 1 if is_2040 else 10
-                y_minor_step = 1 if is_2040 else 5
+                zrx_span = float(rx_rec_max) - float(rx_rec_min)
+                if is_2040:
+                    y_tick_step = 1
+                    y_minor_step = 1
+                elif zrx_span < 10:
+                    y_tick_step = 1
+                    y_minor_step = 0.5
+                elif zrx_span < 50:
+                    y_tick_step = 5
+                    y_minor_step = 1
+                else:
+                    y_tick_step = 10
+                    y_minor_step = 5
 
                 x_major_ticks = np.arange(0, n_rx_channels, dx_tick)
                 x_tick_labels = [str(int(x)) for x in x_major_ticks]
-                y_major_ticks = np.arange(rx_rec_min, rx_rec_max + 1, y_tick_step)
-                y_tick_labels = [str(int(y)) for y in y_major_ticks]
+                y_major_ticks = np.arange(rx_rec_min, rx_rec_max + y_tick_step * 0.5, y_tick_step)
+                y_tick_labels = [f'{y:g}' for y in y_major_ticks]
                 board_ticks = np.arange(0, n_rx_boards, dy_tick)
                 board_tick_labels = [str(int(y)) for y in board_ticks]
 
@@ -1132,7 +1144,7 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
                 ax2.set_yticklabels(board_tick_labels, fontsize=axfsize)
 
                 ax1.set_xticks(np.arange(0, n_rx_channels + 1, dx_tick), minor=True)
-                ax1.set_yticks(np.arange(rx_rec_min, rx_rec_max + 1, y_minor_step), minor=True)
+                ax1.set_yticks(np.arange(rx_rec_min, rx_rec_max + y_minor_step * 0.5, y_minor_step), minor=True)
                 ax2.set_xticks(np.arange(-0.5, n_rx_channels + 0.5, 1), minor=True)
                 ax2.set_yticks(np.arange(-0.5, n_rx_boards + 0.5, 1), minor=True)
                 ax2.set_ylim(n_rx_boards - 0.5, -0.5)
@@ -3673,6 +3685,12 @@ def check_system_info(fname, sis_version=int(4)):
     return sys_info
 
 
+def _apply_binned_xaxis_sort(ax, sort='ascending'):
+    """Flip x-axis for descending sort so parameter values decrease left to right."""
+    if (sort or 'ascending').lower() == 'descending':
+        ax.invert_xaxis()
+
+
 def _binned_n_label_y(mean, yerr, means_for_range, y_max_lim=None):
     """Y coordinate for n= count labels, placed above the error bar cap."""
     data_range = max(means_for_range) - min(means_for_range) if len(means_for_range) else 0.0
@@ -3683,8 +3701,10 @@ def _binned_n_label_y(mean, yerr, means_for_range, y_max_lim=None):
     return label_y
 
 
-def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed', 
-                            param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[], binned_range_lims=[], error_bar_type='Standard Deviation', individual_type='Non-binned (Light Grey)', return_fig=False):
+def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
+                            param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[],
+                            binned_range_lims=[], error_bar_type='Standard Deviation',
+                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False):
     """
     Plot RX Noise binned by speed with mean noise levels.
     
@@ -4043,6 +4063,7 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     
     # Add legend in upper left corner
     ax.legend(loc='upper left')
+    _apply_binned_xaxis_sort(ax, sort)
     
     # Adjust layout with extra top margin to prevent title overlap
     plt.subplots_adjust(top=0.85, left=0.1, right=0.95, bottom=0.1)  # Add extra space at the top
@@ -4088,8 +4109,10 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     return None
 
 
-def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed', 
-                            param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[], binned_range_lims=[], error_bar_type='Standard Deviation', individual_type='Non-binned (Light Grey)', return_fig=False):
+def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
+                            param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[],
+                            binned_range_lims=[], error_bar_type='Standard Deviation',
+                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False):
     """
     Plot RX Noise binned by speed with 2-knot intervals.
     
@@ -4464,6 +4487,8 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             except (ValueError, TypeError) as e:
                 print(f'Warning: Invalid binned_range_lims values: {binned_range_lims}, using autoscale')
         
+        _apply_binned_xaxis_sort(ax, sort)
+        
         # Adjust layout with extra top margin to prevent title overlap
         plt.subplots_adjust(top=0.85, left=0.1, right=0.95, bottom=0.1)  # Add extra space at the top
         
@@ -4663,8 +4688,8 @@ def plot_rx_noise_binned_2kt_combined_frequencies(rxn_all_frequencies, save_figs
 def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                                    param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
                                    binned_range_lims=[], error_bar_type='Standard Deviation',
-                                   individual_type='Non-binned (Light Grey)', return_fig=False,
-                                   x_padding=50.0):
+                                   individual_type='Non-binned (Light Grey)', sort='ascending',
+                                   return_fig=False, x_padding=50.0):
     """
     Plot RX Noise with one bin per distinct parameter value (RPM, pitch, etc.).
 
@@ -4991,6 +5016,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     ax.set_ylabel('RX Noise Level (dB)', fontsize=12, fontweight='bold')
     ax.legend(loc='upper left', fontsize=10)
     ax.grid(True, alpha=0.3)
+    _apply_binned_xaxis_sort(ax, sort)
     
     # Adjust layout to prevent title overlap
     plt.subplots_adjust(top=0.85, left=0.1, right=0.95, bottom=0.1)
@@ -5036,22 +5062,24 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
 def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                              param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
                              binned_range_lims=[], error_bar_type='Standard Deviation',
-                             individual_type='Non-binned (Light Grey)', return_fig=False):
+                             individual_type='Non-binned (Light Grey)', sort='ascending',
+                             return_fig=False):
     """Plot RX Noise binned by distinct RPM values."""
     return _plot_rx_noise_binned_discrete(
         rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
         param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
         binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
-        individual_type=individual_type, return_fig=return_fig, x_padding=50.0)
+        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=50.0)
 
 
 def plot_rx_noise_binned_pitch(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                                param_unit='Pitch (deg)', param_adjust=0.0, param=[], param_lims=[],
                                binned_range_lims=[], error_bar_type='Standard Deviation',
-                               individual_type='Non-binned (Light Grey)', return_fig=False):
+                               individual_type='Non-binned (Light Grey)', sort='ascending',
+                               return_fig=False):
     """Plot RX Noise binned by distinct pitch values (deg or %)."""
     return _plot_rx_noise_binned_discrete(
         rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
         param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
         binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
-        individual_type=individual_type, return_fig=return_fig, x_padding=None)
+        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=None)

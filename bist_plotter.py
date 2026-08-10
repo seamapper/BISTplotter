@@ -335,6 +335,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.prm_plot_max_tb.returnPressed.connect(self.trigger_auto_update)
         self.current_tb.returnPressed.connect(self.trigger_auto_update)
         self.current_dir_cbox.currentTextChanged.connect(self.auto_update_plot)
+        self.sort_cbox.currentTextChanged.connect(self.auto_update_plot)
         
         # Connect binned RX noise Y-axis range controls for auto-update
         self.binned_rxnoise_min_tb.returnPressed.connect(self.trigger_auto_update)
@@ -459,8 +460,8 @@ class MainWindow(QtWidgets.QMainWindow):
         noise_test_type_lbl.setFixedWidth(lblw)
         # noise_test_type_list = ['vs. Speed', 'vs. Azimuth', 'Standalone']
         noise_test_type_list = ['vs. Speed', 'vs. Speed (Binned) - 1kt', 'vs. Speed (Binned) - 2kt',
-                                'vs. RPM (Binned)', 'vs. Pitch (Binned) - deg', 'vs. Pitch (Binned) - %',
-                                'vs. Azimuth']
+                                'vs. RPM', 'vs. RPM (Binned)', 'vs. Pitch (deg)', 'vs. Pitch (Binned) - deg',
+                                'vs. Pitch (%)', 'vs. Pitch (Binned) - %', 'vs. Azimuth']
         self.noise_test_type_cbox = ComboBox(noise_test_type_list, 200, btnh, 'noise_test_cbox',
                                              'Select a noise test type:'
                                              '\nNoise vs. speed (e.g., 0-10 kts; see Speed tab for options)'
@@ -636,16 +637,15 @@ class MainWindow(QtWidgets.QMainWindow):
         sort_order_layout = BoxLayout([sort_order_lbl, self.sort_cbox, self.ignore_sis5_speeds_chk], 'h',
                                       full_width=True)
 
-        # default_test_params_layout = BoxLayout([prm_str_layout, prm_unit_layout], 'v')
-        # default_test_params_layout = BoxLayout([prm_str_layout, swell_dir_layout], 'v')
-        # default_test_params_layout = BoxLayout([prm_str_layout, swell_dir_layout, sort_order_layout], 'v')
-        default_test_params_layout = BoxLayout([prm_str_layout, current_layout, swell_dir_layout, sort_order_layout],
-                                               'v', full_width=True)
-
+        default_test_params_layout = BoxLayout([prm_str_layout], 'v', full_width=True)
 
         self.parse_test_params_gb = GroupBox('Parse test params from files', default_test_params_layout,
                                                True, True, 'parse_test_params_gb')
-        
+
+        plotting_test_params_layout = BoxLayout([current_layout, swell_dir_layout, sort_order_layout],
+                                                'v', full_width=True)
+        self.plotting_test_params_gb = GroupBox('Plotting && Test Params', plotting_test_params_layout,
+                                                False, False, 'plotting_test_params_gb')
 
         self.parse_test_params_gb.setToolTip('The RX Noise test params (e.g., speed) will be parsed from the file, '
                                              'if available (e.g., speed in SIS 5 format).\n\n'
@@ -720,7 +720,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # param_layout = BoxLayout([prm_unit_layout, self.parse_test_params_gb, self.custom_param_gb], 'v')
         param_layout = BoxLayout([prm_unit_layout, self.prm_plot_lim_gb, self.binned_rxnoise_range_gb,
                                   self.binned_error_type_gb, self.binned_individual_gb, self.parse_test_params_gb,
-                                  self.custom_param_gb], 'v', full_width=True)
+                                  self.plotting_test_params_gb, self.custom_param_gb], 'v', full_width=True)
 
 
         self.noise_test_gb = GroupBox('RX Noise Testing Plot Parameters', param_layout, False, False, 'noise_test_gb')
@@ -935,6 +935,12 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.update_log(f'Warning: {unit_name} option not found in parameter unit dropdown')
 
+    def _rx_noise_plot_test_type(self, test_type):
+        """Map GUI test_type to plot_rx_noise test_type (pitch/RPM params use speed_bist)."""
+        if test_type in ('speed', 'pitch_deg', 'pitch_pct', 'rpm'):
+            return 'speed'
+        return test_type
+
     def update_noise_param_string(self):  # update the dict of strings for parsing noise parameters from filenames
         self.noise_params[self.prm_unit_cbox.currentText()] = self.prm_str_tb.text()
 
@@ -980,6 +986,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.custom_param_gb.setEnabled(False)
                 self.update_swell_dir()
 
+            elif self.noise_test_type_cbox.currentText() == 'vs. RPM':
+                self._set_noise_param_unit('RPM')
+                self.update_log('Parameter unit automatically set to RPM for RPM heatmap plots')
+                self.prm_unit_cbox.setEnabled(True)
+                self.prm_str_tb.setEnabled(True)
+                self.swell_dir_tb.setEnabled(False)
+                self.custom_param_gb.setEnabled(True)
+
             elif self.noise_test_type_cbox.currentText() == 'vs. RPM (Binned)':  # set parameter unit to RPM
                 self._set_noise_param_unit('RPM')
                 self.update_log('Parameter unit automatically set to RPM for RPM binned plots')
@@ -990,10 +1004,26 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.swell_dir_tb.setEnabled(False)
                 self.custom_param_gb.setEnabled(True)
 
+            elif self.noise_test_type_cbox.currentText() == 'vs. Pitch (deg)':
+                self._set_noise_param_unit('Pitch (deg)')
+                self.update_log('Parameter unit automatically set to Pitch (deg) for pitch heatmap plots')
+                self.prm_unit_cbox.setEnabled(True)
+                self.prm_str_tb.setEnabled(True)
+                self.swell_dir_tb.setEnabled(False)
+                self.custom_param_gb.setEnabled(True)
+
             elif self.noise_test_type_cbox.currentText() == 'vs. Pitch (Binned) - deg':
                 self._set_noise_param_unit('Pitch (deg)')
                 self.update_log('Parameter unit automatically set to Pitch (deg) for pitch binned plots')
                 self.binned_individual_cb.setCurrentIndex(0)
+                self.prm_unit_cbox.setEnabled(True)
+                self.prm_str_tb.setEnabled(True)
+                self.swell_dir_tb.setEnabled(False)
+                self.custom_param_gb.setEnabled(True)
+
+            elif self.noise_test_type_cbox.currentText() == 'vs. Pitch (%)':
+                self._set_noise_param_unit('Pitch (%)')
+                self.update_log('Parameter unit automatically set to Pitch (%) for pitch heatmap plots')
                 self.prm_unit_cbox.setEnabled(True)
                 self.prm_str_tb.setEnabled(True)
                 self.swell_dir_tb.setEnabled(False)
@@ -1189,7 +1219,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 bist_plot,
                 save_figs=True,
                 output_dir=output_dir,
-                test_type=test_type,
+                test_type=self._rx_noise_plot_test_type(test_type),
                 param=plot_data.get('param', []),
                 param_unit=plot_data.get('param_unit', 'SOG (kt)'),
                 param_adjust=plot_data.get('param_adjust', 0.0),
@@ -1221,6 +1251,7 @@ class MainWindow(QtWidgets.QMainWindow):
             binned_range_lims=plot_data.get('binned_range_lims', []),
             error_bar_type=plot_data.get('error_bar_type', 'Standard Deviation'),
             individual_type=plot_data.get('individual_type', 'Non-binned (Light Grey)'),
+            sort=plot_data.get('sort', 'ascending'),
             return_fig=False)
         if isinstance(result, tuple):
             result = result[0]
@@ -1714,6 +1745,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         except ValueError:
                             self.update_log('Warning: Invalid binned RX noise range values, using default range')
                     current_freq_data['binned_range_lims'] = binned_range_lims
+                    current_freq_data['sort'] = self.sort_cbox.currentText().lower().strip()
                     
                     # Update the BIST data structure with new system info for title generation
                     bist_data = current_freq_data['bist']
@@ -1746,6 +1778,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              binned_range_lims=current_freq_data['binned_range_lims'],
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
+                                             sort=current_freq_data.get('sort', 'ascending'),
                                              return_fig=True)
                     elif current_freq_data['test_type'] == 'speed_binned':
                         result = plot_function(current_freq_data['bist'], save_figs=False,
@@ -1758,6 +1791,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              binned_range_lims=current_freq_data['binned_range_lims'],
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
+                                             sort=current_freq_data.get('sort', 'ascending'),
                                              return_fig=True)
                     elif current_freq_data['test_type'] in ('rpm_binned', 'pitch_binned_deg', 'pitch_binned_pct'):
                         result = plot_function(current_freq_data['bist'], save_figs=False,
@@ -1770,13 +1804,14 @@ class MainWindow(QtWidgets.QMainWindow):
                                              binned_range_lims=current_freq_data['binned_range_lims'],
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
+                                             sort=current_freq_data.get('sort', 'ascending'),
                                              return_fig=True)
                     elif current_freq_data.get('plot_type') == 'rx_noise':
                         result = read_bist.plot_rx_noise(
                             current_freq_data['bist'],
                             save_figs=False,
                             output_dir=self.output_dir,
-                            test_type=current_freq_data['test_type'],
+                            test_type=self._rx_noise_plot_test_type(current_freq_data['test_type']),
                             param=current_freq_data.get('param', []),
                             param_unit=current_freq_data['param_unit'],
                             param_adjust=param_adjust,
@@ -1976,15 +2011,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log('Please select at least one BIST to plot...')
 
         if self.type_cbox.currentIndex() == 2:  # check if RX Noise test
-            if self.noise_test_type_cbox.currentIndex() in [0, 1, 2, 3, 4, 5]:
+            if self.noise_test_type_cbox.currentIndex() in [0, 1, 2, 3, 4, 5, 6, 7, 8]:
                 if self.custom_param_gb.isChecked():
                     self.update_log('RX Noise: Custom test parameters entered by user will override values parsed '
                                     'from files or filenames, and will be applied in order of files loaded')
                 else:
                     noise_mode = self.noise_test_type_cbox.currentText()
-                    if noise_mode == 'vs. RPM (Binned)':
+                    if noise_mode == 'vs. RPM':
+                        self.update_log('RX Noise vs. RPM: RPM values will be parsed from filename '
+                                        '(or custom parameters), if available')
+                    elif noise_mode == 'vs. RPM (Binned)':
                         self.update_log('RX Noise vs. RPM (Binned): RPM values will be parsed from filename, '
                                         'if available')
+                    elif noise_mode == 'vs. Pitch (deg)':
+                        self.update_log('RX Noise vs. Pitch (deg): Pitch values will be parsed from filename '
+                                        '(or custom parameters), if available')
+                    elif noise_mode == 'vs. Pitch (%)':
+                        self.update_log('RX Noise vs. Pitch (%): Pitch values will be parsed from filename '
+                                        '(or custom parameters), if available')
                     elif noise_mode in ('vs. Pitch (Binned) - deg', 'vs. Pitch (Binned) - %'):
                         self.update_log('RX Noise vs. Pitch (Binned): Pitch values will be parsed from filename '
                                         '(or custom parameters), if available')
@@ -2124,7 +2168,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # print('and len', len(bist_temp['test']))
 
                     # get speed or heading of test from filename
-                    if rxn_test_type in [0, 1, 2, 3, 4, 5]:  # speed, binned speed, RPM/pitch binned; parse param from fname
+                    if rxn_test_type in [0, 1, 2, 3, 4, 5, 6, 7, 8]:  # speed, binned, RPM/pitch heatmap, RPM/pitch binned; parse param from fname
 
                         print('\n\n****got bist_temp[speed] =', bist_temp['speed'])
 
@@ -2202,7 +2246,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 bist_fail_list.append(fname)
                                 continue
 
-                    elif rxn_test_type == 6:  # RX noise vs azimuth rel to seas; get hdg, swell dir from fname or user
+                    elif rxn_test_type == 9:  # RX noise vs azimuth rel to seas; get hdg, swell dir from fname or user
                         if bist_temp['hdg_true'] == [] and bist_temp['azimuth'] == []:
                             try:
                                 self.update_log('Parsing headings (and azimuths, if available) from filenames')
@@ -2517,29 +2561,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     
                     self.update_log(f"Generating RX channel plots for {n_freq} frequencies...")
                     
+                    fname_str = bist['filename'][0][bist['filename'][0].rfind("/") + 1:-4]
+                    freq_labels = [str(f) for f in bist['freq_range'][file_index][test_index]]
+                    
                     # Generate the first plot (heatmap) using plot_rx_z
                     heatmap_figure = read_bist.plot_rx_z(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
-                    
-                    if heatmap_figure:
-                        # Store the data needed to regenerate this plot
-                        plot_data = {
-                            'bist': bist,
-                            'plot_type': 'rx_channels',
-                            'plot_subtype': 'heatmap'
-                        }
-                        self.frequency_data.append(plot_data)
-                        
-                        # Apply font size adjustments for GUI display
-                        heatmap_figure = self.apply_gui_font_sizes(heatmap_figure)
-                        
-                        self.all_figures.append(heatmap_figure)
-                        self.total_charts += 1
-                        
-                        # Create a descriptive name for this plot
-                        fname_str = bist['filename'][0][bist['filename'][0].rfind("/") + 1:-4]
-                        freq_str = str(bist['freq_range'][file_index][test_index][0]) if n_freq > 0 else "Unknown"
-                        plot_name = f"RX Channels Heatmap - {fname_str} - {freq_str} kHz"
-                        self.freq_list.append(plot_name)
+                    self._append_rx_channel_plot_results(
+                        heatmap_figure, bist, 'heatmap', fname_str, freq_labels)
                     
                     # Generate the second plot (line + heatmap) using plot_rx_z_line_heatmap
                     lineheat_figure = read_bist.plot_rx_z_line_heatmap(
@@ -2549,51 +2577,13 @@ class MainWindow(QtWidgets.QMainWindow):
                         return_fig=True,
                         gui_mode=True
                     )
-
-                    if lineheat_figure:
-                        # Store the data needed to regenerate this plot
-                        plot_data = {
-                            'bist': bist,
-                            'plot_type': 'rx_channels',
-                            'plot_subtype': 'line_heatmap'
-                        }
-                        self.frequency_data.append(plot_data)
-
-                        # Apply font size adjustments for GUI display
-                        lineheat_figure = self.apply_gui_font_sizes(lineheat_figure)
-
-                        self.all_figures.append(lineheat_figure)
-                        self.total_charts += 1
-
-                        # Create a descriptive name for this plot
-                        fname_str = bist['filename'][0][bist['filename'][0].rfind("/") + 1:-4]
-                        freq_str = str(bist['freq_range'][file_index][test_index][0]) if n_freq > 0 else "Unknown"
-                        plot_name = f"RX Channels Line+Heatmap - {fname_str} - {freq_str} kHz"
-                        self.freq_list.append(plot_name)
+                    self._append_rx_channel_plot_results(
+                        lineheat_figure, bist, 'line_heatmap', fname_str, freq_labels)
 
                     # Generate the third plot (history) using plot_rx_z_history
                     history_figure = read_bist.plot_rx_z_history(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
-                    
-                    if history_figure:
-                        # Store the data needed to regenerate this plot
-                        plot_data = {
-                            'bist': bist,
-                            'plot_type': 'rx_channels',
-                            'plot_subtype': 'history'
-                        }
-                        self.frequency_data.append(plot_data)
-                        
-                        # Apply font size adjustments for GUI display
-                        history_figure = self.apply_gui_font_sizes(history_figure)
-                        
-                        self.all_figures.append(history_figure)
-                        self.total_charts += 1
-                        
-                        # Create a descriptive name for this plot
-                        fname_str = bist['filename'][0][bist['filename'][0].rfind("/") + 1:-4]
-                        freq_str = str(bist['freq_range'][file_index][test_index][0]) if n_freq > 0 else "Unknown"
-                        plot_name = f"RX Channels History - {fname_str} - {freq_str} kHz"
-                        self.freq_list.append(plot_name)
+                    self._append_rx_channel_plot_results(
+                        history_figure, bist, 'history', fname_str, freq_labels)
                         
                 except Exception as e:
                     self.update_log(f"Error generating RX channel plots: {str(e)}")
@@ -2623,18 +2613,25 @@ class MainWindow(QtWidgets.QMainWindow):
                     test_type = 'speed_binned'
                 elif dropdown_index == 2:  # vs. Speed (Binned) - 2kt
                     test_type = 'speed_binned_2kt'
-                elif dropdown_index == 3:  # vs. RPM (Binned)
+                elif dropdown_index == 3:  # vs. RPM
+                    test_type = 'rpm'
+                elif dropdown_index == 4:  # vs. RPM (Binned)
                     test_type = 'rpm_binned'
-                elif dropdown_index == 4:  # vs. Pitch (Binned) - deg
+                elif dropdown_index == 5:  # vs. Pitch (deg)
+                    test_type = 'pitch_deg'
+                elif dropdown_index == 6:  # vs. Pitch (Binned) - deg
                     test_type = 'pitch_binned_deg'
-                elif dropdown_index == 5:  # vs. Pitch (Binned) - %
+                elif dropdown_index == 7:  # vs. Pitch (%)
+                    test_type = 'pitch_pct'
+                elif dropdown_index == 8:  # vs. Pitch (Binned) - %
                     test_type = 'pitch_binned_pct'
-                elif dropdown_index == 6:  # vs. Azimuth
+                elif dropdown_index == 9:  # vs. Azimuth
                     test_type = 'azimuth'
                 else:
                     test_type = 'speed'  # fallback
                 param_unit = self.prm_unit_cbox.currentText()
                 param_adjust = 0.0
+                sort_order = self.sort_cbox.currentText().lower().strip()
 
                 # sort_by = test_type
                 print('test_type = ', test_type)
@@ -2653,8 +2650,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     param_count = len(bist['test'])  # Use actual number of test files, not parameter count
                     print('using custom param list=', param_list)
 
-                elif test_type in ('speed', 'speed_binned', 'speed_binned_2kt', 'rpm_binned',
-                                   'pitch_binned_deg', 'pitch_binned_pct'):
+                elif test_type in ('speed', 'rpm', 'pitch_deg', 'pitch_pct', 'speed_binned', 'speed_binned_2kt',
+                                   'rpm_binned', 'pitch_binned_deg', 'pitch_binned_pct'):
                     # param_list = bist['speed_bist']
                     param_count = len(bist['speed'])
 
@@ -2715,6 +2712,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'binned_range_lims': binned_range_lims,
                                 'error_bar_type': self.binned_error_type_cb.currentText(),
                                 'individual_type': self.binned_individual_cb.currentText(),
+                                'sort': sort_order,
                                 'plot_function': read_bist.plot_rx_noise_binned_new,  # Store function for regeneration
                                 'model': self.model_number,
                                 'sn': self.sn,
@@ -2733,6 +2731,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                      param_adjust=param_adjust,
                                                                      param_lims=param_lims,
                                                                      binned_range_lims=binned_range_lims,
+                                                                     error_bar_type=self.binned_error_type_cb.currentText(),
+                                                                     individual_type=self.binned_individual_cb.currentText(),
+                                                                     sort=sort_order,
                                                                      return_fig=True)
                             # Extract figure from tuple (binned functions return (fig, data_dict))
                             if isinstance(figure_result, tuple):
@@ -2782,7 +2783,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'param_unit': self.prm_unit_cbox.currentText(),
                                     'param_adjust': param_adjust,
                                     'param_lims': param_lims,
-                                    'binned_range_lims': binned_range_lims
+                                    'binned_range_lims': binned_range_lims,
+                                    'sort': sort_order,
+                                    'error_bar_type': self.binned_error_type_cb.currentText(),
+                                    'individual_type': self.binned_individual_cb.currentText(),
+                                    'plot_function': read_bist.plot_rx_noise_binned_new,
                                 }
                                 self.frequency_data.append(plot_data)
                                 
@@ -2795,6 +2800,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                          param_adjust=param_adjust,
                                                                          param_lims=param_lims,
                                                                          binned_range_lims=binned_range_lims,
+                                                                         error_bar_type=self.binned_error_type_cb.currentText(),
+                                                                         individual_type=self.binned_individual_cb.currentText(),
+                                                                         sort=sort_order,
                                                                          return_fig=True)
                                 # Extract figure from tuple (binned functions return (fig, data_dict))
                                 if isinstance(figure_result, tuple):
@@ -2855,6 +2863,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'binned_range_lims': binned_range_lims,
                                 'error_bar_type': self.binned_error_type_cb.currentText(),
                                 'individual_type': self.binned_individual_cb.currentText(),
+                                'sort': sort_order,
                                 'plot_function': read_bist.plot_rx_noise_binned_2kt,  # Store function for regeneration
                                 'model': self.model_number,
                                 'sn': self.sn,
@@ -2873,6 +2882,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                      param_adjust=param_adjust,
                                                                      param_lims=param_lims,
                                                                      binned_range_lims=binned_range_lims,
+                                                                     error_bar_type=self.binned_error_type_cb.currentText(),
+                                                                     individual_type=self.binned_individual_cb.currentText(),
+                                                                     sort=sort_order,
                                                                      return_fig=True)
                             # Extract figure from tuple (binned functions return (fig, data_dict))
                             if isinstance(figure_result, tuple):
@@ -2923,7 +2935,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'param_adjust': param_adjust,
                                     'param_lims': param_lims,
                                     'binned_range_lims': binned_range_lims,
-                                    'error_bar_type': self.binned_error_type_cb.currentText()
+                                    'sort': sort_order,
+                                    'error_bar_type': self.binned_error_type_cb.currentText(),
+                                    'individual_type': self.binned_individual_cb.currentText(),
+                                    'plot_function': read_bist.plot_rx_noise_binned_2kt,
                                 }
                                 self.frequency_data.append(plot_data)
                                 
@@ -2936,6 +2951,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                          param_adjust=param_adjust,
                                                                          param_lims=param_lims,
                                                                          binned_range_lims=binned_range_lims,
+                                                                         error_bar_type=self.binned_error_type_cb.currentText(),
+                                                                         individual_type=self.binned_individual_cb.currentText(),
+                                                                         sort=sort_order,
                                                                          return_fig=True)
                                 # Extract figure from tuple (binned functions return (fig, data_dict))
                                 if isinstance(figure_result, tuple):
@@ -3001,6 +3019,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'binned_range_lims': binned_range_lims,
                                 'error_bar_type': self.binned_error_type_cb.currentText(),
                                 'individual_type': self.binned_individual_cb.currentText(),
+                                'sort': sort_order,
                                 'plot_function': discrete_plot_fn,
                                 'model': self.model_number,
                                 'sn': self.sn,
@@ -3021,6 +3040,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                          binned_range_lims=binned_range_lims,
                                                                          error_bar_type=self.binned_error_type_cb.currentText(),
                                                                          individual_type=self.binned_individual_cb.currentText(),
+                                                                         sort=sort_order,
                                                                          return_fig=True)
                             # Extract figure from tuple (binned functions return (fig, data_dict))
                             if isinstance(figure_result, tuple):
@@ -3075,6 +3095,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'binned_range_lims': binned_range_lims,
                                     'error_bar_type': self.binned_error_type_cb.currentText(),
                                     'individual_type': self.binned_individual_cb.currentText(),
+                                    'sort': sort_order,
                                     'plot_function': discrete_plot_fn,
                                     'model': self.model_number,
                                     'sn': self.sn,
@@ -3095,6 +3116,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                          binned_range_lims=binned_range_lims,
                                                                          error_bar_type=self.binned_error_type_cb.currentText(),
                                                                          individual_type=self.binned_individual_cb.currentText(),
+                                                                         sort=sort_order,
                                                                          return_fig=True)
                                 # Extract figure from tuple (binned functions return (fig, data_dict))
                                 if isinstance(figure_result, tuple):
@@ -3149,7 +3171,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             # Generate and display the plot
                             figure = read_bist.plot_rx_noise(bist, save_figs=False,
                                                                      output_dir=self.output_dir,
-                                                                     test_type=test_type,
+                                                                     test_type=self._rx_noise_plot_test_type(test_type),
                                                                      param=param_list,
                                                                      param_unit=self.prm_unit_cbox.currentText(),
                                                                      param_adjust=param_adjust,
@@ -3220,7 +3242,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 # Create the plot and get the figure
                                 figure = read_bist.plot_rx_noise(bist_freq, save_figs=False,
                                                                          output_dir=self.output_dir,
-                                                                         test_type=test_type,
+                                                                         test_type=self._rx_noise_plot_test_type(test_type),
                                                                          param=param_list,  # [] if unspecified
                                                                          param_unit=param_unit,
                                                                          param_adjust=param_adjust,
@@ -3701,16 +3723,21 @@ class MainWindow(QtWidgets.QMainWindow):
                         # Use the stored figure directly
                         figure = self.all_figures[plot_data['figure_index']]
                     elif 'plot_subtype' in plot_data:
+                        bist_plot = plot_data['bist']
+                        if 'freq_index' in plot_data:
+                            bist_plot = self._create_single_frequency_bist(bist_plot, plot_data['freq_index'])
                         # Handle specific plot subtypes (heatmap vs history)
                         if plot_data['plot_subtype'] == 'heatmap':
-                            figure = read_bist.plot_rx_z(plot_data['bist'], save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
+                            figure = read_bist.plot_rx_z(bist_plot, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
                         elif plot_data['plot_subtype'] == 'line_heatmap':
-                            figure = read_bist.plot_rx_z_line_heatmap(plot_data['bist'], save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
+                            figure = read_bist.plot_rx_z_line_heatmap(bist_plot, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
                         elif plot_data['plot_subtype'] == 'history':
-                            figure = read_bist.plot_rx_z_history(plot_data['bist'], save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
+                            figure = read_bist.plot_rx_z_history(bist_plot, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
                         else:
                             # Fallback to original method
                             figure = self.generate_rx_channel_plot(plot_data['bist'], save_figs=False, output_dir=self.output_dir)
+                        if isinstance(figure, list):
+                            figure = figure[0] if figure else None
                     elif 'freq_index' in plot_data:
                         # Generate plot for specific frequency
                         figure = self.generate_rx_channel_plot_for_frequency(plot_data['bist'], 
@@ -3734,6 +3761,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                binned_range_lims=plot_data['binned_range_lims'],
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
+                                                               sort=plot_data.get('sort', 'ascending'),
                                                                return_fig=True)
                     # Extract figure from tuple (binned functions return (fig, data_dict))
                     if isinstance(figure_result, tuple):
@@ -3752,6 +3780,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                binned_range_lims=plot_data['binned_range_lims'],
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
+                                                               sort=plot_data.get('sort', 'ascending'),
                                                                return_fig=True)
                     # Extract figure from tuple (binned functions return (fig, data_dict))
                     if isinstance(figure_result, tuple):
@@ -3770,17 +3799,18 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                binned_range_lims=plot_data['binned_range_lims'],
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
+                                                               sort=plot_data.get('sort', 'ascending'),
                                                                return_fig=True)
                     # Extract figure from tuple (binned functions return (fig, data_dict))
                     if isinstance(figure_result, tuple):
                         figure = figure_result[0]
                     else:
                         figure = figure_result
-                elif plot_type == 'rx_noise' or test_type in ['speed', 'azimuth', 'depth']:
+                elif plot_type == 'rx_noise' or test_type in ['speed', 'rpm', 'pitch_deg', 'pitch_pct', 'azimuth', 'depth']:
                     # Handle regular RX noise plots
                     figure = read_bist.plot_rx_noise(plot_data['bist'], save_figs=False,
                                                    output_dir=self.output_dir,
-                                                   test_type=plot_data['test_type'],
+                                                   test_type=self._rx_noise_plot_test_type(plot_data['test_type']),
                                                    param=plot_data['param'],
                                                    param_unit=plot_data['param_unit'],
                                                    param_adjust=plot_data['param_adjust'],
@@ -3793,6 +3823,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     # Fallback for any other plot types
                     self.update_log(f"Unknown plot type: plot_type={plot_type}, test_type={test_type}")
+                    return
+
+                if isinstance(figure, list):
+                    freq_index = plot_data.get('freq_index', 0)
+                    figure = figure[freq_index] if freq_index < len(figure) else figure[0]
+                if figure is None:
+                    self.update_log("No figure generated for current chart")
                     return
                 
                 # Replace the current figure
@@ -4137,6 +4174,35 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log(f"Traceback: {traceback.format_exc()}")
             return None
 
+    def _normalize_plot_figures(self, figure_or_list):
+        """Return a list of matplotlib figures from a plot function return value."""
+        if figure_or_list is None:
+            return []
+        if isinstance(figure_or_list, list):
+            return [fig for fig in figure_or_list if fig is not None]
+        return [figure_or_list]
+
+    def _append_rx_channel_plot_results(self, figure_or_list, bist, plot_subtype, fname_str, freq_list):
+        """Register one or more RX channel figures for GUI navigation."""
+        subtype_labels = {
+            'heatmap': 'RX Channels Heatmap',
+            'line_heatmap': 'RX Channels Line+Heatmap',
+            'history': 'RX Channels History',
+        }
+        label_prefix = subtype_labels.get(plot_subtype, 'RX Channels')
+        for freq_index, fig in enumerate(self._normalize_plot_figures(figure_or_list)):
+            fig = self.apply_gui_font_sizes(fig)
+            freq_str = str(freq_list[freq_index]) if freq_index < len(freq_list) else "Unknown"
+            self.frequency_data.append({
+                'bist': bist,
+                'plot_type': 'rx_channels',
+                'plot_subtype': plot_subtype,
+                'freq_index': freq_index,
+            })
+            self.all_figures.append(fig)
+            self.total_charts += 1
+            self.freq_list.append(f"{label_prefix} - {fname_str} - {freq_str} kHz")
+
     def apply_gui_font_sizes(self, figure):
         """Apply smaller font sizes to a figure for GUI display"""
         try:
@@ -4192,37 +4258,48 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log(f"Error applying GUI font sizes: {str(e)}")
             return figure
 
+    @staticmethod
+    def _slice_test_freq_data(data, freq_index):
+        """Extract one frequency from list- or dict-keyed per-test BIST fields."""
+        if isinstance(data, list):
+            if freq_index < len(data):
+                return [data[freq_index]]
+            return []
+        if isinstance(data, dict):
+            if freq_index in data:
+                return [data[freq_index]]
+            return []
+        return data
+
     def _create_single_frequency_bist(self, bist, freq_index):
         """Create a modified BIST data structure with only the specified frequency"""
         try:
-            # Create a copy of the BIST data
+            freq_keys = [
+                'rx', 'rx_array', 'freq_range', 'test_datetime',
+                'rx_limits', 'rx_array_limits', 'rx_units',
+            ]
             bist_single_freq = {}
             for key in bist:
-                if key in ['rx', 'rx_array', 'freq_range', 'test_datetime', 'rx_limits', 'rx_array_limits', 'rx_units']:
-                    # These keys contain frequency-specific data
+                if key in freq_keys:
                     if isinstance(bist[key], list):
                         bist_single_freq[key] = []
                         for file_idx in range(len(bist[key])):
                             if isinstance(bist[key][file_idx], dict):
-                                # Handle test-level data
                                 bist_single_freq[key].append({})
                                 for test_idx in bist[key][file_idx]:
-                                    if isinstance(bist[key][file_idx][test_idx], list):
-                                        # Handle frequency-level data
-                                        if freq_index < len(bist[key][file_idx][test_idx]):
-                                            bist_single_freq[key][file_idx][test_idx] = [bist[key][file_idx][test_idx][freq_index]]
-                                        else:
-                                            bist_single_freq[key][file_idx][test_idx] = []
+                                    test_data = bist[key][file_idx][test_idx]
+                                    if key == 'test_datetime':
+                                        bist_single_freq[key][file_idx][test_idx] = test_data
                                     else:
-                                        bist_single_freq[key][file_idx][test_idx] = bist[key][file_idx][test_idx]
+                                        bist_single_freq[key][file_idx][test_idx] = self._slice_test_freq_data(
+                                            test_data, freq_index)
                             else:
                                 bist_single_freq[key].append(bist[key][file_idx])
                     else:
                         bist_single_freq[key] = bist[key]
                 else:
-                    # Copy other keys as-is
                     bist_single_freq[key] = bist[key]
-            
+
             return bist_single_freq
             
         except Exception as e:
