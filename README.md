@@ -9,20 +9,23 @@ A graphical tool for analyzing and visualizing Kongsberg multibeam echosounder B
 BISTplotter supports multiple BIST test types:
 
 - **TX Channels Impedance** - Plot impedance of TX channels at the transducer, measured through the TRU
-- **RX Channels Impedance** - Plot impedance of RX channels measured at the receiver and at the transducer
+- **RX Channels Impedance** - Plot impedance of RX channels measured at the receiver and at the transducer (heatmap, line+heatmap, and history views; multi-frequency files such as EM712 55/85 kHz are navigable per frequency)
 - **RX Noise Level** - Plot noise levels perceived by the RX system across all channels
-- **RX Noise Spectrum** - Visualize RX spectrum BIST data collected at different speeds and headings
+- **RX Noise Spectrum** - Visualize RX spectrum BIST data collected at different speeds and headings *(parser/plotter support is limited)*
 
 The application provides an intuitive GUI for:
 - Loading and managing multiple BIST files
 - Interactive plotting with navigation controls
 - System information tracking (model, serial number, date)
 - Customizable test parameters
-- Export capabilities for analysis results
+- Export capabilities for analysis results (exported figure sizes/layouts are independent of the on-screen window size)
+- **About view on startup** – The Plot Window shows program info (logo, version, freeze date, developers, NSF support) until data is plotted
+- **Resizable window** – Only the middle Plot Window grows or shrinks; left and right columns stay fixed width and scroll when needed
 - **Dark theme** – GUI uses a dark theme regardless of system settings (plot area keeps default white background)
+- **RX Noise plot types** – vs. Speed (heatmap), 1 kt / 2 kt binned, vs. RPM, vs. Pitch (deg/%), binned RPM/Pitch, and vs. Azimuth; sort order and Ignore SiS5 Speeds options where applicable
 - **RX Noise vs Speed** – Values outside the 30–70 dB colorbar range are shown in black (below 30 dB) or magenta (above 70 dB), with console warnings when data exceeds the range
-- **Colormaps** – Jet, Inferno, Hot, RedBlue, and CoolWarm. Inferno and Hot use custom ranges (bottom at step 40 and 24 respectively). RedBlue (bwr) and CoolWarm support a configurable **Center** (inflection point in dB, default 55) for the blue–white–red transition
-- **TX/RX channel out-of-range coloring** – TX and RX channel heatmaps indicate values outside the colorbar range using black (below min) and magenta (above max), including colorbar extend indicators
+- **Colormaps** – Jet, Inferno, Hot, RedBlue, CoolWarm, and Reversed Managua. Inferno and Hot use custom ranges (bottom at step 40 and 24 respectively). RedBlue, CoolWarm, and Reversed Managua support a configurable **Center** (inflection point in dB, default 55)
+- **TX/RX channel out-of-range coloring** – TX and RX channel heatmaps indicate values outside the colorbar range using black (below min) and magenta (above max), including colorbar extend indicators; per-frequency impedance limits from SIS 5 files (e.g. EM712) are applied when regenerating GUI plots
 - **Heatmap hover tooltips** – GUI tooltips (upper-left corner) show per-cell values:
   - TX Channels style-1 heatmap: TX Slot, TX Channel, Impedance
   - RX Channels heatmap: RX Channel, RX Board, Impedance
@@ -79,10 +82,11 @@ Pre-built executables are available in the [Releases](https://github.com/seamapp
 
 1. **Select BIST Test Type**: Choose the type of BIST test you want to analyze from the dropdown menu
 2. **Load Files**: Click "Add Files" to select one or more BIST text files
-3. **Enter System Information**: Provide the multibeam model, serial number, and test date
-4. **Configure Parameters**: Adjust any custom parameters as needed
-5. **Plot**: Click "Plot BIST" to generate visualizations
-6. **Navigate**: Use the navigation controls to browse through multiple plots
+3. **Enter System Information**: Provide the multibeam model, serial number, and test date (or allow values parsed from the files)
+4. **Configure Parameters**: Adjust any custom parameters as needed (for RX Noise, set plot type, units, colormap, sort order, etc.)
+5. **Plot**: Click "Plot BIST" to generate visualizations in the Plot Window
+6. **Navigate**: Use Previous / Next to browse multiple charts (frequencies or plot styles)
+7. **Export**: Use **Export Plot(s)** to save figures to a chosen directory at the standard export sizes (not the on-screen window size)
 
 ### Input File Formats
 
@@ -94,9 +98,10 @@ Pre-built executables are available in the [Releases](https://github.com/seamapp
 
 - For RX Noise analysis, collect 10-20 BISTs per condition (e.g., per speed) to reduce the impact of transient noises
 - Save one text file per condition (e.g., one file per vessel speed) for organized analysis
-- Factory limits for acceptable BIST levels are automatically parsed from the text file when available
+- Factory limits for acceptable BIST levels are automatically parsed from the text file when available (including per-frequency RX limits on multi-frequency SIS 5 systems)
 - For **SIS 5 TX Channels** combined files, impedance may appear in multiple blocks (separate slot-index header rows per group of slots); the plotter merges them into one heatmap
 - Out-of-spec reports are generated automatically when plotting; check the output directory and the Activity Log for filenames
+- Resize the main window as needed; side panels scroll so controls remain usable while the plot area expands
 
 ### Output reports (TX / RX Channels)
 
@@ -113,20 +118,22 @@ BISTplotter was developed and tested primarily with:
 - **EM302** (SIS 4 format)
 - **EM710** (SIS 4 format)
 - **EM122** (SIS 4 format)
+- **EM712 / EM714** (SIS 5, including multi-frequency RX Channels such as 55 and 85 kHz)
 - **EM2040** (with some limitations for RX Noise BIST files)
+- **EM304** and other SIS 5 systems with split TX impedance tables
 
-Support for other formats and features may require additional development. SIS 5 model parsing was updated in v2026.3 to correctly extract model numbers (e.g. EM2040, EM304) from the BIST header. **EM304** and other SIS 5 systems with split TX impedance tables are supported.
+SIS 5 model parsing extracts model numbers (e.g. EM2040, EM304, EM712) from the BIST header. Support for other formats and features may require additional development.
 
 ## Known Limitations
 
 - `N_RX_boards` is typically 4, but in some cases will be 2; this is currently set manually and will eventually be detected automatically
 - EM2040 RX Noise BIST files may include columns corresponding to frequency, not RX board; additional development is needed to handle this smoothly, especially between SIS 4 and SIS 5 formats
-- RX impedance limits are not automatically detected; these can be found in the BIST text file and manually adjusted if needed
+- RX Noise Spectrum plotting is not fully implemented
 - All impedance tests are meant as proxies for hardware health and not as replacement for direct measurement with Kongsberg tools
 
 ## Version
 
-Current version: **2026.7** (see `version.py`)
+Current version: **2026.15** (see `version.py`)
 
 ## Authors
 
@@ -137,11 +144,15 @@ Current version: **2026.7** (see `version.py`)
 
 This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
 
-Copyright (c) 2025, Center for Coastal and Ocean Mapping, University of New Hampshire
+Copyright (c) 2025–2026, Center for Coastal and Ocean Mapping, University of New Hampshire
 
 ## Acknowledgments
 
-Developed at the Center for Coastal and Ocean Mapping (CCOM) at the University of New Hampshire, in collaboration with the Joint Hydrographic Center (JHC) and the Marine Acoustics Center (MAC).
+Developed at the Center for Coastal and Ocean Mapping (CCOM) at the University of New Hampshire, in collaboration with the Joint Hydrographic Center (JHC) and the Multibeam Advisory Committee (MAC).
+
+This work was supported by the National Science Foundation under:
+- Award #1933720 — *Collaborative Research: Optimization of the Multibeam Sonar Systems of the U.S. Academic Fleet through Coordinated System Testing, Tool Development, and Community Outreach*
+- Award #2614984 — *Advancing U.S. Leadership in Seafloor Mapping Technology for the Academic Research Fleet*
 
 ## Contributing
 
@@ -150,5 +161,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Issues
 
 If you encounter any problems or have feature requests, please open an issue on the [GitHub Issues](https://github.com/seamapper/BISTplotter/issues) page.
-
-

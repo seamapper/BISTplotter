@@ -218,9 +218,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # set up main window
         self.mainWidget = QtWidgets.QWidget(self)
         self.setCentralWidget(self.mainWidget)
-        self.setFixedSize(1600, 1000)  # Set fixed window size to 1600x1000 (no resizing allowed)
+        # Default size matches the former fixed layout; user may resize.
+        # Exports regenerate figures via save_figs=True and are unaffected by window size.
+        self.resize(1600, 1000)
+        self.setMinimumSize(1100, 700)
         self.setWindowTitle(
-            'UNH/CCOM-JHC & MAC - BIST Plotter v.%s - kjerram@ccom.unh.edu & pjohnson@ccom.unh.edu' % __version__
+            'UNH/CCOM-JHC BIST Plotter v.%s - kjerram@ccom.unh.edu & pjohnson@ccom.unh.edu' % __version__
         )
         self.setWindowIcon(QtGui.QIcon(os.path.join(self.media_path, "mac.ico")))
 
@@ -365,6 +368,129 @@ class MainWindow(QtWidgets.QMainWindow):
         print(f"Debug: Checking path: {full_path}")
         
         return full_path
+
+    @staticmethod
+    def _program_freeze_date_text():
+        """Return freeze/build date for the About view (exe mtime when frozen)."""
+        if getattr(sys, 'frozen', False):
+            try:
+                ts = os.path.getmtime(sys.executable)
+                return datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+            except OSError:
+                return 'Unknown'
+        return 'Not frozen (running from source)'
+
+    def _resolve_media_file(self, filename):
+        """Resolve a media asset for source runs and PyInstaller bundles."""
+        candidates = [
+            os.path.join(self.media_path, filename),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'media', filename),
+        ]
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            candidates.insert(0, os.path.join(meipass, 'media', filename))
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return path
+        return candidates[0]
+
+    def _build_about_program_widget(self):
+        """Build the About This Program content shown in the Plot Window on startup."""
+        tab = QtWidgets.QWidget()
+        tab.setSizePolicy(QtWidgets.QSizePolicy.Policy.MinimumExpanding,
+                          QtWidgets.QSizePolicy.Policy.MinimumExpanding)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
+        content = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(content)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+
+        logo_label = QtWidgets.QLabel()
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_path = self._resolve_media_file('mac.png')
+        pixmap = QtGui.QPixmap(logo_path)
+        if not pixmap.isNull():
+            max_w = 280
+            if pixmap.width() > max_w:
+                pixmap = pixmap.scaledToWidth(max_w, Qt.TransformationMode.SmoothTransformation)
+            logo_label.setPixmap(pixmap)
+        else:
+            logo_label.setText('MAC')
+            logo_label.setStyleSheet('font-size: 28px; font-weight: bold;')
+        layout.addWidget(logo_label)
+
+        title = QtWidgets.QLabel('BIST Plotter')
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet('font-size: 22px; font-weight: bold; margin-top: 8px;')
+        layout.addWidget(title)
+
+        version = QtWidgets.QLabel(f'Version {__version__}')
+        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        version.setStyleSheet('font-size: 14px;')
+        layout.addWidget(version)
+
+        freeze = QtWidgets.QLabel(f'Frozen: {self._program_freeze_date_text()}')
+        freeze.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        freeze.setStyleSheet('font-size: 13px; color: #bbbbbb;')
+        layout.addWidget(freeze)
+
+        developers = QtWidgets.QLabel(
+            'Developers: Kevin Jerram (kjerram@ccom.unh.edu) and '
+            'Paul Johnson (pjohnson@ccom.unh.edu)'
+        )
+        developers.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        developers.setWordWrap(True)
+        developers.setStyleSheet('font-size: 13px; margin-top: 4px;')
+        layout.addWidget(developers)
+
+        body = QtWidgets.QLabel()
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.TextFormat.RichText)
+        body.setOpenExternalLinks(True)
+        body.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        body.setStyleSheet('font-size: 13px; line-height: 1.4; margin-top: 16px;')
+        body.setText(
+            '<p>Multibeam Echosounder Assessment Toolkit: Kongsberg BIST Plotter.</p>'
+            '<p>Read Kongsberg Built-In Self-Test (BIST) files for assessing EM multibeam '
+            'system performance and hardware health, including TX/RX channel impedance, '
+            'RX noise level, and related test products.</p>'
+            '<p>Load one or more BIST text files, choose a test type, then use '
+            '<b>Plot BIST</b> to display results in this window. Use the navigation '
+            'controls below when multiple charts are available.</p>'
+            '<p>Developed at the Center for Coastal and Ocean Mapping (CCOM) / '
+            'Joint Hydrographic Center (JHC), University of New Hampshire.</p>'
+            '<p>This work was supported by the National Science Foundation under:</p>'
+            '<ul>'
+            '<li>Award #1933720 — <i>Collaborative Research: Optimization of the Multibeam '
+            'Sonar Systems of the U.S. Academic Fleet through Coordinated System Testing, '
+            'Tool Development, and Community Outreach</i></li>'
+            '<li>Award #2614984 — <i>Advancing U.S. Leadership in Seafloor Mapping Technology '
+            'for the Academic Research Fleet</i></li>'
+            '</ul>'
+        )
+        layout.addWidget(body)
+        layout.addStretch(1)
+
+        scroll.setWidget(content)
+        tab_layout = QtWidgets.QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.addWidget(scroll)
+        return tab
+
+    def _show_about_in_plot_window(self):
+        """Show the About view in the Plot Window."""
+        if hasattr(self, 'plot_stack') and hasattr(self, 'about_plot_widget'):
+            self.plot_stack.setCurrentWidget(self.about_plot_widget)
+
+    def _show_plot_canvas(self):
+        """Show the matplotlib canvas in the Plot Window (hides About)."""
+        if hasattr(self, 'plot_stack') and hasattr(self, 'plot_figure_canvas'):
+            self.plot_stack.setCurrentWidget(self.plot_figure_canvas)
 
     def set_right_layout(self):
         # set layout with file controls on right, sources on left, and progress log on bottom
@@ -772,9 +898,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # set file list group box
         self.file_list_gb = QtWidgets.QGroupBox('Sources')
         self.file_list_gb.setLayout(self.file_list_layout)
-        self.file_list_gb.setMinimumWidth(550)
-        self.file_list_gb.setSizePolicy(QtWidgets.QSizePolicy.Policy.MinimumExpanding,
-                                        QtWidgets.QSizePolicy.Policy.MinimumExpanding)
+        self.file_list_gb.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Preferred)
 
         # add activity log widget
         self.log = QtWidgets.QTextEdit()
@@ -809,7 +935,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # set the log group box widget with log layout
         self.log_gb = QtWidgets.QGroupBox('Activity Log')
         self.log_gb.setLayout(self.log_layout)
-        self.log_gb.setMinimumWidth(550)
 
         # set the left panel layout with file controls on top and log on bottom
         self.left_layout = QtWidgets.QVBoxLayout()
@@ -818,59 +943,87 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def set_main_layout(self):  # set the main layout with files tab on left, file list/log in middle, and controls on right
         main_layout = QtWidgets.QHBoxLayout()
-        
+        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.setSpacing(6)
+
+        # Fixed side-column widths; only the middle plot area grows with the window
+        left_col_w = 335
+        right_col_w = 340
+
         # Left column: Sources (file list + controls), Plot, Activity Log
         left_column = QtWidgets.QVBoxLayout()
+        left_column.setContentsMargins(0, 0, 0, 0)
 
         self.file_list_layout.addLayout(self.file_btn_layout)
+        self.file_list_gb.setMinimumWidth(0)
         self.file_list_gb.setFixedWidth(315)
+        self.file_list_gb.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Expanding)
         left_column.addWidget(self.file_list_gb, 1)
 
         plot_gb = QtWidgets.QGroupBox('Plot')
         plot_gb.setLayout(self.tab2.layout)
         plot_gb.setFixedWidth(315)
         left_column.addWidget(plot_gb)
-        
-        # Add Activity Log first - same width with fixed height
-        self.log_gb.setFixedWidth(315)  # Match Files section width exactly (increased by 35px)
-        self.log_gb.setMaximumHeight(200)  # Increased Activity Log height
+
+        self.log_gb.setMinimumWidth(0)
+        self.log_gb.setFixedWidth(315)
+        self.log_gb.setMaximumHeight(200)
         left_column.addWidget(self.log_gb)
-        
-        # Set minimum width for left column
+        left_column.addStretch(1)
+
         left_widget = QtWidgets.QWidget()
         left_widget.setLayout(left_column)
-        left_widget.setMinimumWidth(250)
-        left_widget.setMaximumWidth(335)  # Increased by 35px to accommodate wider left column
-        
-        # Middle column: Plot window only - full height
+        left_widget.setMinimumWidth(315)
+        left_scroll = self._make_side_column_scroll(left_widget, left_col_w)
+
+        # Middle column: Plot window only - expands with window resize
         middle_column = QtWidgets.QVBoxLayout()
-        
-        # Add plot window to middle column - full height
+        middle_column.setContentsMargins(0, 0, 0, 0)
+
         plot_window_gb = QtWidgets.QGroupBox('Plot Window')
         plot_window_layout = QtWidgets.QVBoxLayout()
-        
+
+        # Stack About view (startup) and matplotlib canvas (after plotting)
+        self.plot_stack = QtWidgets.QStackedWidget()
+        self.plot_stack.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+
+        self.about_plot_widget = self._build_about_program_widget()
+        self.plot_stack.addWidget(self.about_plot_widget)  # index 0
+
         # Initialize matplotlib figure for plot display
         # Start with a reasonable default size that will be adjusted when plots are loaded
         self.plot_figure = Figure(figsize=(8, 8))
         self.plot_figure_canvas = FigureCanvas(self.plot_figure)
         self.plot_figure_canvas.setMouseTracking(True)
-        plot_window_layout.addWidget(self.plot_figure_canvas)
-        
+        self.plot_figure_canvas.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        self.plot_figure_canvas.setMinimumSize(0, 0)
+        self.plot_stack.addWidget(self.plot_figure_canvas)  # index 1
+
+        self._plot_window_layout = plot_window_layout
+        plot_window_layout.addWidget(self.plot_stack, 1)  # stretch: fill plot window
+        self.plot_stack.setCurrentWidget(self.about_plot_widget)
+
         # Add navigation controls for multiple charts
         nav_layout = QtWidgets.QHBoxLayout()
-        
+
         # Previous button
         self.prev_chart_btn = QtWidgets.QPushButton("← Previous")
         self.prev_chart_btn.setToolTip("Show previous chart")
         self.prev_chart_btn.setEnabled(False)
         nav_layout.addWidget(self.prev_chart_btn)
-        
+
         # Chart indicator label
         self.freq_label = QtWidgets.QLabel("Chart: None")
         self.freq_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.freq_label.setStyleSheet("font-weight: bold; color: #2E86AB;")
         nav_layout.addWidget(self.freq_label)
-        
+
         # Next button
         self.next_chart_btn = QtWidgets.QPushButton("Next →")
         self.next_chart_btn.setToolTip("Show next chart")
@@ -878,19 +1031,22 @@ class MainWindow(QtWidgets.QMainWindow):
         nav_layout.addWidget(self.next_chart_btn)
         self.prev_chart_btn.clicked.connect(self.show_previous_frequency)
         self.next_chart_btn.clicked.connect(self.show_next_frequency)
-        
+
         plot_window_layout.addLayout(nav_layout)
         plot_window_gb.setLayout(plot_window_layout)
-        middle_column.addWidget(plot_window_gb, 1)  # Give it stretch factor of 1 for full height
-        
-        # Set minimum width for middle column
+        middle_column.addWidget(plot_window_gb, 1)
+
         middle_widget = QtWidgets.QWidget()
         middle_widget.setLayout(middle_column)
         middle_widget.setMinimumWidth(400)
-        
+        middle_widget.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+
         # Right column: System info and Plot section
         right_column = QtWidgets.QVBoxLayout()
-        
+        right_column.setContentsMargins(0, 0, 0, 0)
+
         self.custom_info_gb.setFixedWidth(320)
         right_column.addWidget(self.custom_info_gb)
 
@@ -907,20 +1063,34 @@ class MainWindow(QtWidgets.QMainWindow):
         session_gb.setFixedWidth(320)
         session_gb.setMaximumHeight(100)
         right_column.addWidget(session_gb)
-        right_column.addStretch()
-        
-        # Set minimum width for right column
+        right_column.addStretch(1)
+
         right_widget = QtWidgets.QWidget()
         right_widget.setLayout(right_column)
-        right_widget.setMinimumWidth(250)
-        right_widget.setMaximumWidth(350)
-        
-        # Add all columns to main layout
-        main_layout.addWidget(left_widget)
-        main_layout.addWidget(middle_widget)
-        main_layout.addWidget(right_widget)
-        
+        right_widget.setMinimumWidth(320)
+        right_scroll = self._make_side_column_scroll(right_widget, right_col_w)
+
+        # Side columns fixed width; middle column takes all remaining space
+        main_layout.addWidget(left_scroll, 0)
+        main_layout.addWidget(middle_widget, 1)
+        main_layout.addWidget(right_scroll, 0)
+
         self.mainWidget.setLayout(main_layout)
+
+    def _make_side_column_scroll(self, content_widget, fixed_width):
+        """Fixed-width side column with scroll bars when content exceeds the window height."""
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidget(content_widget)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setFixedWidth(fixed_width)
+        scroll.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        scroll.setMinimumHeight(0)
+        return scroll
 
     def _set_noise_param_unit(self, unit_name):
         """Select a parameter unit in the RX Noise combo box if present."""
@@ -3286,6 +3456,94 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calc_pb.setValue(total_prog)
         QtWidgets.QApplication.processEvents()
 
+    def _is_rx_noise_level_figure(self, figure, plot_type=None, test_type=None):
+        """True for RX Noise Level heatmaps (speed/azimuth/etc.), not binned line plots."""
+        if plot_type == 'rx_noise':
+            return True
+        if plot_type and str(plot_type).startswith('rx_noise_binned'):
+            return False
+        if test_type in ('speed', 'azimuth', 'rpm', 'pitch_deg', 'pitch_pct'):
+            return True
+        if figure is None:
+            return False
+        # Heuristic: Level plot uses 3 GridSpec rows (param, heatmap, colorbar)
+        return len(figure.get_axes()) >= 3 and bool(figure.get_suptitle())
+
+    def _show_figure_on_canvas(self, figure, plot_type=None, test_type=None):
+        """Bind a figure to the Qt canvas and size it to the plot window (GUI only).
+
+        Exports call plot functions separately with save_figs=True, so this does not
+        change exported figure size/layout.
+        """
+        if figure is None:
+            return
+
+        self._show_plot_canvas()
+
+        # Drop the temporary pyplot/Qt canvas created by plt.figure()
+        old_canvas = getattr(figure, 'canvas', None)
+        figure.set_canvas(self.plot_figure_canvas)
+        self.plot_figure_canvas.figure = figure
+        self.plot_figure = figure
+        if old_canvas is not None and old_canvas is not self.plot_figure_canvas:
+            try:
+                old_canvas.close()
+            except Exception:
+                pass
+
+        self._plot_show_meta = {'plot_type': plot_type, 'test_type': test_type}
+        self._sync_canvas_figure_size(figure, plot_type=plot_type, test_type=test_type)
+
+        # Re-sync after Qt finishes layout (fixes first paint at export 8x11 aspect)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._resync_shown_figure_size)
+
+    def _sync_canvas_figure_size(self, figure, plot_type=None, test_type=None):
+        """Match figure inches to the canvas widget using matplotlib's resize path."""
+        if figure is None or self.plot_figure_canvas.figure is not figure:
+            return
+
+        QtWidgets.QApplication.processEvents()
+        size = self.plot_figure_canvas.size()
+        if size.width() < 50 or size.height() < 50:
+            parent = self.plot_figure_canvas.parentWidget()
+            if parent is not None and parent.width() > 50 and parent.height() > 50:
+                size = parent.size()
+            else:
+                size = QSize(max(size.width(), 400), max(size.height(), 400))
+
+        self.plot_figure_canvas.resizeEvent(QtGui.QResizeEvent(size, size))
+
+        if self._is_rx_noise_level_figure(figure, plot_type=plot_type, test_type=test_type):
+            # Keep GridSpec margins from plot_rx_noise; only leave room for the title
+            try:
+                figure.subplots_adjust(top=0.88)
+            except Exception:
+                pass
+        elif plot_type == 'tx_channels':
+            try:
+                read_bist._center_axes_block_in_figure(figure, top_margin=0.88)
+            except Exception:
+                pass
+        elif figure.get_suptitle():
+            try:
+                figure.tight_layout(rect=[0, 0, 1, 0.93])
+            except Exception:
+                pass
+
+        self.plot_figure_canvas.updateGeometry()
+
+    def _resync_shown_figure_size(self):
+        meta = getattr(self, '_plot_show_meta', None) or {}
+        figure = getattr(self, 'plot_figure', None)
+        if figure is None:
+            return
+        self._sync_canvas_figure_size(
+            figure,
+            plot_type=meta.get('plot_type'),
+            test_type=meta.get('test_type'))
+        self.plot_figure_canvas.draw_idle()
+
     def display_plot_in_window(self, plot_function, *args, **kwargs):
         """Display a plot in the GUI plot window"""
         try:
@@ -3306,37 +3564,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Try to use the returned figure directly
                 try:
                     # Replace our figure with the returned one
-                    self.plot_figure = result
-                    self.plot_figure_canvas.figure = result
-                    
-                    # Resize the figure to fit the GUI canvas properly
-                    # Apply targeted scaling based on plot type
-                    original_size = self.plot_figure.get_size_inches()
-                    
-                    # Detect if this is a vs. speed plot (tall figure with multiple subplots)
-                    is_vs_speed_plot = (original_size[1] > 10.0 and len(self.plot_figure.get_axes()) > 1)
-                    
-                    if is_vs_speed_plot:
-                        # For vs. speed plots, use moderate height reduction for GUI display
-                        # Scale to 8 inches width but limit height moderately
-                        scale_factor = 8.0 / original_size[0]  # Scale to 8 inches width
-                        new_height = original_size[1] * scale_factor
-                        # Moderate height limits for vs. speed plots to prevent overlap
-                        new_height = max(6.0, min(9.0, new_height))  # Min 6, Max 9 inches for GUI
-                        self.update_log(f"Applied vs. speed plot scaling: {original_size} -> (8, {new_height:.1f})")
-                    else:
-                        # For other plots (binned plots, etc.), use standard scaling
-                        scale_factor = 8.0 / original_size[0]  # Scale to 8 inches width
-                        new_height = original_size[1] * scale_factor
-                        # Standard height limits for other plots
-                        new_height = max(4.0, min(10.0, new_height))
-                        self.update_log(f"Applied standard scaling: {original_size} -> (8, {new_height:.1f})")
-                    
-                    self.plot_figure.set_size_inches(8, new_height)
-                    if is_vs_speed_plot or self.plot_figure.get_suptitle():
-                        self.plot_figure.tight_layout(rect=[0, 0, 1, 0.93])
-                    else:
-                        self.plot_figure.tight_layout()
+                    self._show_figure_on_canvas(result)
+                    self.update_log(
+                        f"Fitted figure to canvas: {self.plot_figure.get_size_inches()}")
                     
                     self.update_log("Successfully replaced figure with returned figure")
                     
@@ -3352,26 +3582,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Fall back to copying approach
                     # Reset to better figure size and try again
                     try:
-                        # Use the same targeted scaling approach
-                        original_size = self.plot_figure.get_size_inches()
-                        
-                        # Detect if this is a vs. speed plot (tall figure with multiple subplots)
-                        is_vs_speed_plot = (original_size[1] > 10.0 and len(self.plot_figure.get_axes()) > 1)
-                        
-                        if is_vs_speed_plot:
-                            # For vs. speed plots, use moderate height reduction
-                            scale_factor = 8.0 / original_size[0]
-                            new_height = original_size[1] * scale_factor
-                            new_height = max(6.0, min(9.0, new_height))  # Min 6, Max 9 inches for GUI
-                            self.update_log(f"Fallback vs. speed plot scaling: {original_size} -> (8, {new_height:.1f})")
-                        else:
-                            # For other plots, use standard scaling
-                            scale_factor = 8.0 / original_size[0]
-                            new_height = original_size[1] * scale_factor
-                            new_height = max(4.0, min(10.0, new_height))
-                            self.update_log(f"Fallback standard scaling: {original_size} -> (8, {new_height:.1f})")
-                        
-                        self.plot_figure.set_size_inches(8, new_height)
+                        self._show_figure_on_canvas(self.plot_figure)
                         self.plot_figure_canvas.draw()
                         self.update_log("Canvas updated after size adjustment")
                     except Exception as e2:
@@ -3832,38 +4043,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log("No figure generated for current chart")
                     return
                 
-                # Replace the current figure
-                self.plot_figure = figure
-                self.plot_figure_canvas.figure = figure
-                
-                # Apply the same sizing logic as in display_plot_in_window
-                original_size = self.plot_figure.get_size_inches()
-                
-                # Detect if this is a vs. speed plot (tall figure with multiple subplots)
-                is_vs_speed_plot = (original_size[1] > 10.0 and len(self.plot_figure.get_axes()) > 1)
-                
-                if is_vs_speed_plot:
-                    # For vs. speed plots, use moderate height reduction for GUI display
-                    scale_factor = 8.0 / original_size[0]  # Scale to 8 inches width
-                    new_height = original_size[1] * scale_factor
-                    # Moderate height limits for vs. speed plots to prevent overlap
-                    new_height = max(6.0, min(9.0, new_height))  # Min 6, Max 9 inches for GUI
-                    self.update_log(f"Applied vs. speed plot scaling: {original_size} -> (8, {new_height:.1f})")
-                else:
-                    # For other plots (binned plots, etc.), use standard scaling
-                    scale_factor = 8.0 / original_size[0]  # Scale to 8 inches width
-                    new_height = original_size[1] * scale_factor
-                    # Standard height limits for other plots
-                    new_height = max(4.0, min(10.0, new_height))
-                    self.update_log(f"Applied standard scaling: {original_size} -> (8, {new_height:.1f})")
-                
-                self.plot_figure.set_size_inches(8, new_height)
-                if is_vs_speed_plot or self.plot_figure.get_suptitle():
-                    self.plot_figure.tight_layout(rect=[0, 0, 1, 0.93])
-                else:
-                    self.plot_figure.tight_layout()
-                if plot_type == 'tx_channels':
-                    read_bist._center_axes_block_in_figure(self.plot_figure, top_margin=0.88)
+                # Replace the current figure and size it to the plot window
+                self._show_figure_on_canvas(
+                    figure,
+                    plot_type=plot_type,
+                    test_type=test_type)
                 
                 # Force a redraw of the canvas
                 self.plot_figure_canvas.draw()

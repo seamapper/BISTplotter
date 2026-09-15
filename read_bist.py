@@ -26,6 +26,7 @@ import datetime
 import re
 import os
 import math
+import traceback
 
 
 __version__ = "0.1.1"
@@ -67,7 +68,7 @@ def parse_rx_z(fname, sis_version=4, sis4_retry=False):
         return[]
 
     # is_2040 = sys_info['model'].find('2040') > -1
-    is_2040 = sys_info['model'] in ['2040', '2045', '2040P']
+    is_2040 = sys_info['model'] in ['2040', '2042', '2045', '2040P']
     print('got is_2040 =', is_2040)
     print('parsing rx_z for file:', fname)
     print('in file', fname, 'sys_info=', sys_info)
@@ -526,8 +527,10 @@ def parse_rx_z(fname, sis_version=4, sis4_retry=False):
 
             # print('at end of while loop, i is ', i)
 
-    except ValueError:
+    except (ValueError, IndexError) as e:
         print("***WARNING: Error parsing ", fname)
+        print(f"*** parse_rx_z {type(e).__name__}: {e}")
+        traceback.print_exc()
 
     # if data found, reshape and store in temp dict
     # if multiple BISTs in one file, this approach assumes each has the same freq range(s) and limits, if parsed
@@ -732,7 +735,7 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
     for i in range(len(z['filename'])):
         # is_2040 = z['model'][i].find('2040') > -1
         print('checking z[model][i] = ', z['model'][i])
-        is_2040 = z['model'][i] in ['2040', '2045', '2040P']
+        is_2040 = z['model'][i] in ['2040', '2042', '2045', '2040P']
         print('got is_2040 =', is_2040)
 
         # is_2040 = any([z['model'][i].find(m) > -1 for m in ['2040', '2045']])
@@ -1031,7 +1034,7 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
 
     # Track generated figures for return_fig=True
     for i in range(len(z['filename'])):
-        is_2040 = z['model'][i] in ['2040', '2045', '2040P']
+        is_2040 = z['model'][i] in ['2040', '2042', '2045', '2040P']
         fname_str = z['filename'][i]
         fname_str = fname_str[fname_str.rfind("/") + 1:-4]
 
@@ -2411,7 +2414,7 @@ def parse_rx_noise(fname, sis_version=int(4)):
         footer_str = "Maximum"  # end of SIS 4 RX Noise test
 
         # SIS 5 format applies also to some EM2040 variants and EM712 logged in SIS 4 (retry w/ sis_version = 5)
-        if sis_version == 5 or sys_info['model'] in ['2040', '2045', '2040P']:
+        if sis_version == 5 or sys_info['model'] in ['2040', '2042', '2045', '2040P']:
             print('trying SIS 5 format in parser')
             # header_str = "RX noise level"  # start of SIS 5 RX Noise test
             # header_str = ['Noise Test.', 'RX noise level'][int(sis_version == 5)]
