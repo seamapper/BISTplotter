@@ -964,7 +964,7 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
                     print('in plotter, z[test_datetime][i][t] =', z['test_datetime'][i][t])
 
                     test_time_str = datetime.datetime.strftime(z['test_datetime'][i][t], '%Y/%m/%d %H:%M:%S.%f')[:-3]  # keep ms
-                    title_str = 'RX Channels BIST\n' + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n' + \
+                    title_str = 'RX Channels BIST\n' + em_model_id_for_title(z, file_index=i) + '\n' + \
                                 test_time_str + '\nFrequency: ' + freq_str
                     # title_str = 'RX Channels BIST\n' + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n' + \
                     #             z['date'][i] + ' ' + z['time'][i] + '\nFrequency: ' + freq_str
@@ -1065,7 +1065,7 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
 
                 title_str = (
                     'RX Channels BIST\n'
-                    + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n'
+                    + em_model_id_for_title(z, file_index=i) + '\n'
                     + test_time_str + '\nFrequency: ' + freq_str
                 )
 
@@ -1506,7 +1506,7 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
         freq_str = f_set[f].replace('.0','') + ' kHz'
         freq_str = freq_str.replace('(High) kHz', 'kHz (High)').replace('(Low) kHz', 'kHz (Low)')  # SIS 5 EM2040
 
-        title_str = 'RX Channels BIST\n' + 'EM' + model + ' (S/N ' + sn + ')\n' + \
+        title_str = 'RX Channels BIST\n' + em_model_id_for_title(z) + '\n' + \
                     years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')\n' + \
                     'Frequency: ' + freq_str
                     # 'Frequency: ' + f_set[f] + ' kHz'
@@ -2035,7 +2035,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 ax.set_ylabel('TX Channel (index starts at 0)', fontsize=label_fontsize)
 
                 # set the super title
-                title_str = 'TX Channels BIST\n' + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n' + fname_str
+                title_str = 'TX Channels BIST\n' + em_model_id_for_title(z, file_index=i) + '\n' + fname_str
                 t1 = fig.suptitle(title_str, fontsize=suptitle_fontsize)
                 fig.set_size_inches(10, 12)
                 if gui_mode:
@@ -2127,7 +2127,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
 
 
                 # set the super title
-                title_str = 'TX Channels BIST\n' + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n' + fname_str
+                title_str = 'TX Channels BIST\n' + em_model_id_for_title(z, file_index=i) + '\n' + fname_str
                 t1 = fig.suptitle(title_str, fontsize=suptitle_fontsize)
                 fig.tight_layout()
                 fig.subplots_adjust(top=0.87)
@@ -2340,7 +2340,7 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
         years_str = 'Years: ' + str(yrmin) + '-' + str(yrmax)
 
     # set the super title
-    title_str = 'TX Channels BIST\n' + 'EM' + model + ' (S/N ' + sn + ')\n' + \
+    title_str = 'TX Channels BIST\n' + em_model_id_for_title(z) + '\n' + \
                 years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')\n' + \
                 'Frequency: ' + freq + ' kHz'
                 # 'Frequency: '+z['freq_range'][i][f]+' kHz'
@@ -3371,7 +3371,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
         freq_title = 'Unknown'
 
     title_str = ('RX Noise vs. ' + test_type.capitalize() + '\n' +
-                 'EM' + rxn['model'][0] + ' (S/N ' + rxn['sn'][0] + ')\n' +
+                 em_model_id_for_title(rxn) + '\n' +
                  'Freq: ' + freq_title + ' - Date: ' + date_str)
     try:
         fig.suptitle(title_str, fontsize=16)
@@ -3441,6 +3441,100 @@ def get_freq(model):
     print('leaving get_freq with freq =', freq)
 
     return freq
+
+
+def is_real_detected_sn(sn):
+    """True if sn looks like a real BIST-detected serial (not placeholder/default/FN-)."""
+    if sn is None or sn == []:
+        return False
+    s = str(sn).strip()
+    if not s:
+        return False
+    if s in ('-1', '999', 'None', 'Unknown', 'N/A', 'S/N N/A'):
+        return False
+    if s.upper().startswith('FN-'):
+        return False
+    return True
+
+
+def _title_filename_basenames(filenames):
+    """Return basenames without .txt for title F/N fallback."""
+    names = []
+    if not filenames:
+        return names
+    if isinstance(filenames, (str, bytes)):
+        filenames = [filenames]
+    for f in filenames:
+        if not f:
+            continue
+        base = os.path.basename(str(f))
+        if base.lower().endswith('.txt'):
+            base = base[:-4]
+        names.append(base)
+    return names
+
+
+def format_title_id_clause(sn=None, filenames=None, user_sn=None, user_entered=False):
+    """Return ' (S/N ...)', ' (F/N ...)', or '' for plot titles.
+
+    Rules:
+    - User-entered SN wins → (S/N <user>)
+    - Else real detected SN → (S/N <detected>)
+    - Else exactly one file → (F/N <basename without .txt>)
+    - Else (multiple files, no SN) → empty
+    """
+    if user_entered:
+        u = str(user_sn).strip() if user_sn is not None else ''
+        if u:
+            return f' (S/N {u})'
+    if is_real_detected_sn(sn):
+        return f' (S/N {str(sn).strip()})'
+    bases = _title_filename_basenames(filenames)
+    if len(bases) == 1:
+        return f' (F/N {bases[0]})'
+    return ''
+
+
+def format_em_title_model_line(model, sn=None, filenames=None, user_sn=None, user_entered=False):
+    """Return 'EM{model}' optionally followed by (S/N ...) or (F/N ...)."""
+    model_str = ''
+    if model is not None:
+        model_str = str(model).replace('EM', '').strip()
+    return 'EM' + model_str + format_title_id_clause(
+        sn=sn, filenames=filenames, user_sn=user_sn, user_entered=user_entered)
+
+
+def em_model_id_for_title(z, file_index=None):
+    """Build EM### (S/N|F/N) title fragment from a bist/rxn dict.
+
+    file_index: use that file only (per-file plots). None = all files (history/multi).
+    """
+    user_entered = bool(z.get('sn_user_entered', False))
+    user_sn = z.get('sn_user_value', None)
+    sns = z.get('sn', []) or []
+    fnames = z.get('filename', []) or []
+    models = z.get('model', []) or []
+
+    if user_sn is None and sns:
+        user_sn = sns[0] if isinstance(sns, list) else sns
+
+    if file_index is not None:
+        model = models[file_index] if file_index < len(models) else (models[0] if models else '')
+        sn = sns[file_index] if file_index < len(sns) else (sns[0] if sns else None)
+        filenames = [fnames[file_index]] if file_index < len(fnames) else fnames
+    else:
+        model = models[0] if models else ''
+        sn = None
+        for s in sns:
+            if is_real_detected_sn(s):
+                sn = s
+                break
+        if sn is None and sns:
+            sn = sns[0]
+        filenames = fnames
+
+    return format_em_title_model_line(
+        model, sn=sn, filenames=filenames, user_sn=user_sn, user_entered=user_entered)
 
 
 def init_bist_dict(bist_test_type):
@@ -4022,7 +4116,7 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     description_display = f'Description: {description} - ' if description else ''
     
     title_str = f'RX Noise vs {test_type.capitalize()} (Binned)\n' + \
-                f'{ship_display}EM{rxn["model"][0]} (S/N {rxn["sn"][0]})\n' + \
+                f'{ship_display}{em_model_id_for_title(rxn)}\n' + \
                 f'{description_display}Date: {date_str}\n' + \
                 f'Freq: {freq_display} - Total Tests: {total_tests}'
     
@@ -4458,9 +4552,9 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         description = rxn.get('cruise_name', [''])[0] if rxn.get('cruise_name') else ''
         description_display = f'Description: {description} - ' if description else ''
         
-        title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - 2kt\n' + 
-                    f'{ship_display}EM{rxn["model"][0]} (S/N {rxn["sn"][0]})\n' + 
-                    f'{description_display}Date: {date_str}\n' + 
+        title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - 2kt\n' +
+                    f'{ship_display}{em_model_id_for_title(rxn)}\n' +
+                    f'{description_display}Date: {date_str}\n' +
                     f'Freq: {freq_display} - Total Tests: {total_tests}')
         
         ax.set_title(title_str, fontsize=14, fontweight='bold')
@@ -4600,8 +4694,8 @@ def plot_rx_noise_binned_combined_frequencies(rxn_all_frequencies, save_figs=Tru
     except:
         date_str = 'Unknown'
     
-    title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - {bin_size}kt - All Frequencies\n' + 
-                f'EM{rxn_all_frequencies[0]["model"][0]} SN {rxn_all_frequencies[0]["sn"][0]} - {date_str}')
+    title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - {bin_size}kt - All Frequencies\n' +
+                f'{em_model_id_for_title(rxn_all_frequencies[0])} - {date_str}')
     ax.set_title(title_str, fontsize=14, fontweight='bold')
     
     # Add legend
@@ -5010,7 +5104,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     total_tests = sum(binned_counts.values()) if binned_counts else 0
     
     title_str = (f'RX Noise vs {param_unit} (Binned)\n' +
-                f'{ship_display}EM{model} (S/N {sn})\n' +
+                f'{ship_display}{em_model_id_for_title(rxn)}\n' +
                 f'{description_display}{date_display}\n' +
                 f'Freq: {freq_display} - Total Tests: {total_tests}')
     

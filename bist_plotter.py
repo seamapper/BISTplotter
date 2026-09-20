@@ -1787,6 +1787,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.date_tb.text().strip(),
         )
 
+    def _apply_sn_title_metadata(self, bist):
+        """Attach user SN override flags used by plot title helpers in read_bist."""
+        if bist is None:
+            return
+        bist['sn_user_entered'] = bool(getattr(self, '_sn_user_entered', False))
+        bist['sn_user_value'] = self.sn_tb.text().strip()
+
     def refresh_system_info_from_ui(self):
         """Read system information fields into instance attributes."""
         self.model_number, self.sn, self.ship_name, self.cruise_name, self.date_str = self._system_info_snapshot()
@@ -1929,6 +1936,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         bist_data['cruise_name'] = [self.cruise_name]
                     if 'date' in bist_data:
                         bist_data['date'] = [self.date_str]
+                    self._apply_sn_title_metadata(bist_data)
                     
                     # Debug: Log the updated values
                     self.update_log(f"Updated values - Model: {self.model_number}, SN: {self.sn}, Ship: {self.ship_name}, Date: {self.date_str}")
@@ -2641,6 +2649,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log('     ' + str(i + 1) + ". " + bist_fail_list[i])
 
             self.update_log('Plotting ' + str(bist_count) + ' ' + self.type_cbox.currentText() + ' BIST files...')
+            self._apply_sn_title_metadata(bist)
             self.last_plotted_bist = bist
             self.last_bist_test_type = bist_test_type
 
@@ -4130,7 +4139,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ax.set_ylabel('TX Channel (index starts at 0)', fontsize=label_fontsize)
 
                 # Set the super title
-                title_str = 'TX Channels BIST\n' + 'EM' + bist['model'][file_index] + ' (S/N ' + bist['sn'][file_index] + ')\n' + fname_str
+                title_str = 'TX Channels BIST\n' + read_bist.em_model_id_for_title(bist, file_index=file_index) + '\n' + fname_str
                 fig.suptitle(title_str, fontsize=title_fontsize)
                 fig.set_size_inches(10, 12)
                 read_bist._center_axes_block_in_figure(fig, top_margin=0.88)
@@ -4213,7 +4222,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 cbar.set_label(r'Impedance ($\Omega$, f=' + str(bist['frequency'][file_index][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
 
                 # Set the super title
-                title_str = 'TX Channels BIST\n' + 'EM' + bist['model'][file_index] + ' (S/N ' + bist['sn'][file_index] + ')\n' + fname_str
+                title_str = 'TX Channels BIST\n' + read_bist.em_model_id_for_title(bist, file_index=file_index) + '\n' + fname_str
                 fig.suptitle(title_str, fontsize=title_fontsize)
                 fig.tight_layout()
                 fig.subplots_adjust(top=0.87)
