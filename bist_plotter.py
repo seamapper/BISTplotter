@@ -4186,27 +4186,30 @@ class MainWindow(QtWidgets.QMainWindow):
                 dy_tick = [2, 4][n_tx_slots >= 12]
 
                 # Set major axes ticks for labels
-                ax1.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
-                ax1.set_yticks(np.arange(zmin, zmax+1, 10))
-                ax2.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
+                x_major_ticks = np.arange(0, n_tx_chans + dx_tick - 1, dx_tick)
+                y_major_ticks = np.arange(zmin, zmax + 1, 10)
+                ax1.set_xticks(x_major_ticks)
+                ax1.set_yticks(y_major_ticks)
+                ax2.set_xticks(x_major_ticks)
                 y_slot_pos, y_slot_lbl = read_bist._tx_slot_axis_ticks(n_tx_slots, dy_tick)
                 ax2.set_yticks(y_slot_pos)
 
-                # Set minor axes ticks for gridlines
-                ax1.set_xticks(np.arange(0, (n_tx_chans+1), 5), minor=True)
-                ax1.set_yticks(np.arange(zmin, zmax+1, 5), minor=True)
+                # minor ticks: line plot matches label spacing; heatmap uses per-cell lines
+                ax1.set_xticks(x_major_ticks, minor=True)
+                ax1.set_yticks(y_major_ticks, minor=True)
                 ax2.set_xticks(np.arange(-0.5, (n_tx_chans+0.5), 1), minor=True)
                 ax2.set_yticks(np.arange(-0.5, (n_tx_slots+0.5), 1), minor=True)
 
-                # Set axis tick labels
-                ax1.set_xticklabels(np.arange(0, 40, 5), fontsize=axfsize)
-                ax1.set_yticklabels(np.arange(zmin, zmax+1, 10), fontsize=axfsize)
-                ax2.set_xticklabels(np.arange(0, 40, 5), fontsize=axfsize)
+                # Set axis tick labels (match major tick positions; do not hardcode 0..40)
+                x_tick_labels = [str(int(x)) for x in x_major_ticks]
+                ax1.set_xticklabels(x_tick_labels, fontsize=axfsize)
+                ax1.set_yticklabels([str(int(y)) for y in y_major_ticks], fontsize=axfsize)
+                ax2.set_xticklabels(x_tick_labels, fontsize=axfsize)
                 ax2.set_yticklabels(y_slot_lbl, fontsize=axfsize)
                 ax2.set_ylim(n_tx_slots - 0.5, -0.5)
 
-                # Set grid on minor axes
-                ax1.grid(which='minor', color='k', linewidth=1)
+                # line plot: grid at label interval; heatmap: per-cell minor grid
+                ax1.grid(which='major', color='k', linewidth=1)
                 ax2.grid(which='minor', color='k', linewidth=1)
 
                 # Set axis labels

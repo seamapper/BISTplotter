@@ -1119,16 +1119,12 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
                 zrx_span = float(rx_rec_max) - float(rx_rec_min)
                 if is_2040:
                     y_tick_step = 1
-                    y_minor_step = 1
                 elif zrx_span < 10:
                     y_tick_step = 1
-                    y_minor_step = 0.5
                 elif zrx_span < 50:
                     y_tick_step = 5
-                    y_minor_step = 1
                 else:
                     y_tick_step = 10
-                    y_minor_step = 5
 
                 x_major_ticks = np.arange(0, n_rx_channels, dx_tick)
                 x_tick_labels = [str(int(x)) for x in x_major_ticks]
@@ -1147,12 +1143,13 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
                 ax2.set_yticklabels(board_tick_labels, fontsize=axfsize)
 
                 ax1.set_xticks(np.arange(0, n_rx_channels + 1, dx_tick), minor=True)
-                ax1.set_yticks(np.arange(rx_rec_min, rx_rec_max + y_minor_step * 0.5, y_minor_step), minor=True)
+                ax1.set_yticks(y_major_ticks, minor=True)
                 ax2.set_xticks(np.arange(-0.5, n_rx_channels + 0.5, 1), minor=True)
                 ax2.set_yticks(np.arange(-0.5, n_rx_boards + 0.5, 1), minor=True)
                 ax2.set_ylim(n_rx_boards - 0.5, -0.5)
 
-                ax1.grid(which='minor', color='k', linewidth=1)
+                # line plot: grid at label interval; heatmap: per-cell minor grid
+                ax1.grid(which='major', color='k', linewidth=1)
                 ax2.grid(which='minor', color='k', linewidth=1)
 
                 ax1.set_xlabel('RX Channel (index starts at 0)', fontsize=axfsize)
@@ -2088,30 +2085,31 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 dy_tick = [2, 4][n_tx_slots >= 12]  # y tick = 2 if <12 slots (e.g., 2022 AUS Antarctic EM712 w/ SIS 4)
 
                 # set major axes ticks for labels
-                ax1.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
-                ax1.set_yticks(np.arange(zmin, zmax+1, 10))
-                ax2.set_xticks(np.arange(0, n_tx_chans + dx_tick - 1, dx_tick))
+                x_major_ticks = np.arange(0, n_tx_chans + dx_tick - 1, dx_tick)
+                y_major_ticks = np.arange(zmin, zmax + 1, 10)
+                ax1.set_xticks(x_major_ticks)
+                ax1.set_yticks(y_major_ticks)
+                ax2.set_xticks(x_major_ticks)
                 y_slot_pos, y_slot_lbl = _tx_slot_axis_ticks(n_tx_slots, dy_tick)
                 ax2.set_yticks(y_slot_pos)
 
-                # set minor axes ticks for gridlines
-                ax1.set_xticks(np.arange(0, (n_tx_chans+1), 5), minor=True)
-                ax1.set_yticks(np.arange(zmin, zmax+1, 5), minor=True)
+                # minor ticks: line plot matches label spacing; heatmap uses per-cell lines
+                ax1.set_xticks(x_major_ticks, minor=True)
+                ax1.set_yticks(y_major_ticks, minor=True)
                 ax2.set_xticks(np.arange(-0.5, (n_tx_chans+0.5), 1), minor=True)
                 ax2.set_yticks(np.arange(-0.5, (n_tx_slots+0.5), 1), minor=True)
 
-                # set axis tick labels
-                ax1.set_xticklabels(np.arange(0, 40, 5), fontsize=axfsize)
-                ax1.set_yticklabels(np.arange(zmin, zmax+1, 10), fontsize=axfsize)  # TX impedance
-                ax2.set_xticklabels(np.arange(0, 40, 5), fontsize=axfsize)
-                # ax2.set_yticklabels(np.concatenate((np.array([1]), np.arange(4, 28, 4))), fontsize=axfsize)  # TX slot
-                # ax2.set_yticklabels(np.concatenate((np.array([1]), np.arange(4, n_tx_slots+4, 4))), fontsize=axfsize)  # TX slot
+                # set axis tick labels (match major tick positions; do not hardcode 0..40)
+                x_tick_labels = [str(int(x)) for x in x_major_ticks]
+                ax1.set_xticklabels(x_tick_labels, fontsize=axfsize)
+                ax1.set_yticklabels([str(int(y)) for y in y_major_ticks], fontsize=axfsize)  # TX impedance
+                ax2.set_xticklabels(x_tick_labels, fontsize=axfsize)
                 ax2.set_yticklabels(y_slot_lbl, fontsize=axfsize)  # TX slot
                 ax2.set_ylim(n_tx_slots - 0.5, -0.5)  # keep slot axis aligned with heatmap after invert_yaxis
 
-                # set grid on minor axes
-                ax1.grid(which='minor', color='k', linewidth=1)  # set minor gridlines
-                ax2.grid(which='minor', color='k', linewidth=1)  # set minor gridlines
+                # line plot: grid at label interval; heatmap: per-cell minor grid
+                ax1.grid(which='major', color='k', linewidth=1)
+                ax2.grid(which='minor', color='k', linewidth=1)
 
                 # set axis labels
                 ax1.set_xlabel('TX Channel (index starts at 0)', fontsize=axfsize)
