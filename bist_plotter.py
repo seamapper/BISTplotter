@@ -66,7 +66,7 @@ multiple RX Noise/Spectrum tests
 """
 from PyQt6 import QtWidgets, QtGui
 from PyQt6.QtGui import QDoubleValidator, QPalette, QColor
-from PyQt6.QtCore import Qt, QSize, QEvent
+from PyQt6.QtCore import Qt, QSize, QEvent, QTimer
 import os
 import sys
 import datetime
@@ -296,6 +296,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.add_file_btn.clicked.connect(lambda: self.add_files('Kongsberg BIST .txt(*.txt)'))
         self.get_indir_btn.clicked.connect(self.get_input_dir)
         self.export_plots_btn.clicked.connect(self.export_plots)
+        self.export_analysis_btn.clicked.connect(self.export_analysis)
+        self.import_analysis_btn.clicked.connect(self.import_analysis)
         self.rmv_file_btn.clicked.connect(self.remove_bist_files)
         self.clr_file_btn.clicked.connect(lambda: self.remove_bist_files(clear_all=True))
         self.show_path_chk.stateChanged.connect(self.show_file_paths)
@@ -316,6 +318,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sn_tb.editingFinished.connect(self._on_sn_user_edited)
         self.ship_tb.returnPressed.connect(self.on_system_info_committed)
         self.cruise_tb.returnPressed.connect(self.on_system_info_committed)
+        for optional_field in (self.ship_tb, self.cruise_tb):
+            optional_field.textChanged.connect(
+                lambda _text, field=optional_field: self._refresh_optional_sysinfo_style(field))
+            optional_field.editingFinished.connect(
+                lambda field=optional_field: self._finalize_optional_sysinfo(field))
+            optional_field.installEventFilter(self)
+            self._set_optional_sysinfo_undefined(optional_field)
         self.date_tb.returnPressed.connect(self.on_system_info_committed)
         self.warn_user_chk.stateChanged.connect(self.verify_system_info)
 
@@ -517,11 +526,11 @@ class MainWindow(QtWidgets.QMainWindow):
         sn_info_layout = BoxLayout([sn_tb_lbl, self.sn_tb], 'h')
 
         ship_tb_lbl = Label('Ship Name:', 80, 20, 'ship_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
-        self.ship_tb = LineEdit('R/V Unsinkable II', 200, 20, 'ship', 'Enter the ship name (optional)')
+        self.ship_tb = LineEdit('?', 200, 20, 'ship', 'Enter the ship name (optional). A magenta ? means it is not set and will be left out of plot titles.')
         ship_info_layout = BoxLayout([ship_tb_lbl, self.ship_tb], 'h')
 
         cruise_tb_lbl = Label('Description:', 80, 20, 'cruise_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
-        self.cruise_tb = LineEdit('A 3-hour tour', 200, 20, 'cruise_name', 'Enter the description (optional)')
+        self.cruise_tb = LineEdit('?', 200, 20, 'cruise_name', 'Enter the description (optional). A magenta ? means it is not set and will be left out of plot titles.')
         cruise_info_layout = BoxLayout([cruise_tb_lbl, self.cruise_tb], 'h')
 
         date_tb_lbl = Label('Date:', 115, 20, 'date_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
@@ -551,6 +560,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.export_plots_btn = PushButton('Export Plot', btnw, btnh, 'export_plots_btn',
                                            'Save plot PNG files and out-of-spec reports from the last plot run')
         self.export_plots_btn.setEnabled(False)
+        self.import_analysis_btn = PushButton('Import Analysis', btnw, btnh, 'import_analysis_btn',
+                                              'Load an analysis JSON file, restore its settings, and recreate the plots')
+        self.export_analysis_btn = PushButton('Export Analysis', btnw, btnh, 'export_analysis_btn',
+                                              'Save the plots and an analysis JSON file that can recreate them')
+        self.export_analysis_btn.setEnabled(False)
         self._export_btn_style_default = ''
         self._export_btn_style_pending = (
             'QPushButton { color: #FF8C00; font-weight: bold; }'
@@ -558,6 +572,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._export_pending = False
         self.last_plotted_bist = None
         self.last_bist_test_type = None
+        self.last_plotted_files = []
+        self.last_into_seas_file = None
 
         # Create horizontal layout for Add Files and Add Directory buttons
         add_files_dir_layout = BoxLayout([self.add_file_btn, self.get_indir_btn], 'h', equal_width=True)
@@ -610,6 +626,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.redblue_center_spin.setVisible(t in ('RedBlue', 'CoolWarm', 'Reversed Managua'))
         self.redblue_center_spin.setVisible(self.cmap_cbox.currentText() in ('RedBlue', 'CoolWarm', 'Reversed Managua'))
         self.cmap_cbox.currentTextChanged.connect(_show_center)
+        self.cmap_cbox.currentTextChanged.connect(self._on_colormap_changed)
         cmap_layout = BoxLayout([cmap_lbl, self.cmap_cbox, redblue_lbl, self.redblue_center_spin], 'h', add_stretch=True)
 
         self.select_type_btn = PushButton('Select BISTs', btnw, btnh, 'select_type',
@@ -626,10 +643,11 @@ class MainWindow(QtWidgets.QMainWindow):
         select_clear_layout = BoxLayout([self.select_type_btn, self.clear_type_btn], 'h', equal_width=True)
         
         plot_btn_layout = BoxLayout([self.plot_bist_btn, self.export_plots_btn], 'h', equal_width=True)
+        analysis_btn_layout = BoxLayout([self.import_analysis_btn, self.export_analysis_btn], 'h', equal_width=True)
 
         # set the BIST options layout
         bist_options_layout = BoxLayout([bist_type_layout, noise_type_layout, cmap_layout,
-                                        select_clear_layout, plot_btn_layout], 'v')
+                                        select_clear_layout, plot_btn_layout, analysis_btn_layout], 'v')
 
         # set RX noise test parameters
         prm_unit_lbl = Label('Test units:', 110, 20, 'prm_unit_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
@@ -658,9 +676,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                         'This creates consistent axes for test params aross data sets with '
                                         'different min/max values (e.g., speeds going into seas vs. with seas')
 
-        # set binned RX noise plot Y-axis range controls
-        self.binned_rxnoise_min_tb = LineEdit('30', 40, 20, 'binned_rxnoise_min_tb', 'Enter the binned RX noise plot Y-axis minimum')
-        self.binned_rxnoise_max_tb = LineEdit('70', 40, 20, 'binned_rxnoise_max_tb', 'Enter the binned RX noise plot Y-axis maximum')
+        # RX noise range: binned Y-axis and heatmap color ramp
+        self.binned_rxnoise_min_tb = LineEdit('30', 40, 20, 'binned_rxnoise_min_tb', 'Minimum RX noise (dB)')
+        self.binned_rxnoise_max_tb = LineEdit('70', 40, 20, 'binned_rxnoise_max_tb', 'Maximum RX noise (dB)')
         binned_rxnoise_min_lbl = Label('Min:', 20, 20, 'binned_rxnoise_min_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         binned_rxnoise_max_lbl = Label('Max:', 20, 20, 'binned_rxnoise_max_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         binned_rxnoise_range_layout = BoxLayout([binned_rxnoise_min_lbl, self.binned_rxnoise_min_tb,
@@ -669,9 +687,10 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Create group box for binned RX noise range controls (checkable)
         binned_rxnoise_range_gb_layout = BoxLayout([binned_rxnoise_range_layout], 'v', full_width=True)
-        self.binned_rxnoise_range_gb = GroupBox('Set binned RX noise Y-axis range', binned_rxnoise_range_gb_layout, 
+        self.binned_rxnoise_range_gb = GroupBox('RX noise range (db)', binned_rxnoise_range_gb_layout, 
                                                 True, True, 'binned_rxnoise_range_gb')
-        self.binned_rxnoise_range_gb.setToolTip('Control the Y-axis range of 1kt and 2kt binned RX noise speed plots')
+        self.binned_rxnoise_range_gb.setToolTip('RX noise range in dB. Sets the Y-axis on binned plots and the color ramp on RX noise heatmaps.\n'
+                                                'Values below Min are black and values above Max are magenta.')
         
         # Initially enable the Min/Max text boxes since group box is checked by default
         self.binned_rxnoise_min_tb.setEnabled(True)
@@ -1248,11 +1267,22 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.update_log('Custom parameters disabled - not updating total tests count')
 
-    def update_binned_rxnoise_range(self):  # enable/disable binned RX noise range Min/Max text boxes
+    def update_binned_rxnoise_range(self):  # enable/disable RX noise range Min/Max text boxes
         """Enable or disable the Min/Max text boxes based on group box state"""
         is_checked = self.binned_rxnoise_range_gb.isChecked()
         self.binned_rxnoise_min_tb.setEnabled(is_checked)
         self.binned_rxnoise_max_tb.setEnabled(is_checked)
+
+    def _rx_noise_range_lims(self):
+        """Return [min, max] dB when the RX noise range box is checked and valid, else []."""
+        if not self.binned_rxnoise_range_gb.isChecked():
+            return []
+        try:
+            return [float(self.binned_rxnoise_min_tb.text()),
+                    float(self.binned_rxnoise_max_tb.text())]
+        except ValueError:
+            self.update_log('Warning: Invalid RX noise range values, using default range')
+            return []
 
     def add_files(self, ftype_filter, input_dir='HOME', include_subdir=False):  # add all files of specified type in dir
         if input_dir == 'HOME':  # select files manually if input_dir not specified as optional argument
@@ -1373,6 +1403,7 @@ class MainWindow(QtWidgets.QMainWindow):
         n = len(self.all_figures) if hasattr(self, 'all_figures') and self.all_figures else 0
         self.export_plots_btn.setText('Export Plots' if n > 1 else 'Export Plot')
         self.export_plots_btn.setEnabled(n > 0)
+        self.export_analysis_btn.setEnabled(n > 0)
         if mark_pending and n > 0:
             self._set_export_button_pending()
         elif n == 0:
@@ -1394,6 +1425,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 param_unit=plot_data.get('param_unit', 'SOG (kt)'),
                 param_adjust=plot_data.get('param_adjust', 0.0),
                 param_lims=plot_data.get('param_lims', []),
+                noise_lims=self._rx_noise_range_lims(),
                 cmap=plot_data.get('cmap', 'jet'),
                 sort=plot_data.get('sort', 'ascending'),
                 redblue_center=plot_data.get('redblue_center', 55),
@@ -1441,70 +1473,411 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def export_plots(self):
         """Export all plots and text reports from the last Plot BIST run."""
-        if not getattr(self, 'all_figures', None) or len(self.all_figures) == 0:
-            QtWidgets.QMessageBox.warning(self, 'Export', 'No plots to export. Use Plot BIST first.')
-            return
-        if not self.last_plotted_bist:
-            QtWidgets.QMessageBox.warning(self, 'Export', 'No plot data available to export.')
-            return
-
-        output_dir = self._prompt_export_directory()
+        output_dir = self._begin_plot_export()
         if not output_dir:
-            self.update_log('Export cancelled.')
             return
-
-        bist = self.last_plotted_bist
-        bist_test_type = self.last_bist_test_type
-        self.update_log(f'Exporting to {output_dir}...')
-
         try:
-            if bist_test_type == self.bist_list[1]:  # TX Channels
-                tx_oos = read_bist.write_tx_out_of_spec_report(bist, output_dir=output_dir)
-                if tx_oos:
-                    self.update_log(f'Wrote {len(tx_oos)} TX out-of-spec report(s)')
-                for ps in [1, 2]:
-                    read_bist.plot_tx_z(bist, plot_style=ps, save_figs=True, output_dir=output_dir)
-                f_hist = read_bist.plot_tx_z_history(bist, save_figs=True, output_dir=output_dir)
-                if f_hist:
-                    self.update_log(f'Saved TX history plot {f_hist}')
-
-            elif bist_test_type == self.bist_list[2]:  # RX Channels
-                rx_oos = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=output_dir)
-                if rx_oos:
-                    self.update_log(f'Wrote {len(rx_oos)} RX array out-of-spec report(s)')
-                read_bist.plot_rx_z(bist, save_figs=True, output_dir=output_dir)
-                read_bist.plot_rx_z_line_heatmap(bist, save_figs=True, output_dir=output_dir)
-                read_bist.plot_rx_z_history(bist, save_figs=True, output_dir=output_dir)
-
-            elif bist_test_type == self.bist_list[3]:  # RX Noise
-                for plot_data in self.frequency_data:
-                    self._export_rx_noise_chart(plot_data, output_dir)
-
-            n_plots = len(self.all_figures)
+            n_plots = self._export_plot_files(output_dir)
             self.update_log(f'Exported {n_plots} plot(s) and reports to {output_dir}')
             QtWidgets.QMessageBox.information(
                 self, 'Export complete',
                 f'Saved plot files to:\n{output_dir}')
             self._clear_export_button_highlight()
-
         except Exception as e:
-            self.update_log(f'Error during export: {e}')
+            self._report_export_error(e)
+        finally:
+            self._close_export_figures()
+
+    def export_analysis(self):
+        """Export the plots and a JSON file that can recreate them."""
+        output_dir = self._begin_plot_export()
+        if not output_dir:
+            return
+        try:
+            n_plots = self._export_plot_files(output_dir)
+            started = self._export_started
+            plot_names = self._plots_written_since(output_dir, started)
+            json_path = self._write_analysis_json(output_dir, plot_names)
+            self.update_log(f'Exported {n_plots} plot(s), reports, and analysis file to {output_dir}')
+            QtWidgets.QMessageBox.information(
+                self, 'Export complete',
+                f'Saved plot files and analysis to:\n{output_dir}\n\n{os.path.basename(json_path)}')
+            self._clear_export_button_highlight()
+        except Exception as e:
+            self._report_export_error(e)
+        finally:
+            self._close_export_figures()
+
+    def _begin_plot_export(self):
+        """Confirm a plot exists and ask where to save. Returns the directory, or None."""
+        if not getattr(self, 'all_figures', None) or len(self.all_figures) == 0:
+            QtWidgets.QMessageBox.warning(self, 'Export', 'No plots to export. Use Plot BIST first.')
+            return None
+        if not self.last_plotted_bist:
+            QtWidgets.QMessageBox.warning(self, 'Export', 'No plot data available to export.')
+            return None
+        output_dir = self._prompt_export_directory()
+        if not output_dir:
+            self.update_log('Export cancelled.')
+            return None
+        self.update_log(f'Exporting to {output_dir}...')
+        self._export_started = datetime.datetime.now().timestamp()
+        return output_dir
+
+    def _export_plot_files(self, output_dir):
+        """Write PNG plots and out-of-spec reports for the last plot run."""
+        bist = self.last_plotted_bist
+        bist_test_type = self.last_bist_test_type
+        if bist_test_type == self.bist_list[1]:  # TX Channels
+            tx_oos = read_bist.write_tx_out_of_spec_report(bist, output_dir=output_dir)
+            if tx_oos:
+                self.update_log(f'Wrote {len(tx_oos)} TX out-of-spec report(s)')
+            for ps in [1, 2]:
+                read_bist.plot_tx_z(bist, plot_style=ps, save_figs=True, output_dir=output_dir)
+            f_hist = read_bist.plot_tx_z_history(bist, save_figs=True, output_dir=output_dir)
+            if f_hist:
+                self.update_log(f'Saved TX history plot {f_hist}')
+        elif bist_test_type == self.bist_list[2]:  # RX Channels
+            rx_oos = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=output_dir)
+            if rx_oos:
+                self.update_log(f'Wrote {len(rx_oos)} RX array out-of-spec report(s)')
+            read_bist.plot_rx_z(bist, save_figs=True, output_dir=output_dir)
+            read_bist.plot_rx_z_line_heatmap(bist, save_figs=True, output_dir=output_dir)
+            read_bist.plot_rx_z_history(bist, save_figs=True, output_dir=output_dir)
+        elif bist_test_type == self.bist_list[3]:  # RX Noise
+            for plot_data in self.frequency_data:
+                self._export_rx_noise_chart(plot_data, output_dir)
+        return len(self.all_figures)
+
+    def _report_export_error(self, error):
+        self.update_log(f'Error during export: {error}')
+        import traceback
+        self.update_log(traceback.format_exc())
+        QtWidgets.QMessageBox.critical(self, 'Export failed', str(error))
+
+    def _close_export_figures(self):
+        import matplotlib.pyplot as plt
+        for fig_num in plt.get_fignums():
+            fig = plt.figure(fig_num)
+            if fig not in getattr(self, 'all_figures', []):
+                plt.close(fig)
+
+    def _analysis_colormap_uses_center(self, colormap):
+        return colormap in ('RedBlue', 'CoolWarm', 'Reversed Managua')
+
+    def _analysis_record(self):
+        """Settings needed to recreate the current plot."""
+        files = list(getattr(self, 'last_plotted_files', []) or [])
+        if not files:
+            files = [(self.file_list.item(i).data(1) or '').replace('\\', '/')
+                     for i in range(self.file_list.count())
+                     if self.file_list.item(i).isSelected()]
+        colormap = self.cmap_cbox.currentText()
+        record = {
+            'version': 1,
+            'files': files,
+            'into_seas_file': self.last_into_seas_file,
+            'bist_type': self.type_cbox.currentText(),
+            'plot_noise': self.noise_test_type_cbox.currentText() if self.type_cbox.currentIndex() == 2 else None,
+            'colormap': colormap,
+            'system_information': {
+                'model': self.model_cbox.currentText(),
+                'serial_number': self.sn_tb.text().strip(),
+                'ship_name': self._optional_sysinfo_text(self.ship_tb),
+                'description': self._optional_sysinfo_text(self.cruise_tb),
+                'date': self.date_tb.text().strip(),
+            },
+            'plot_parameters': {
+                'test_units': self.prm_unit_cbox.currentText(),
+                'filename_string': self.prm_str_tb.text(),
+                'sort_order': self.sort_cbox.currentText(),
+                'ignore_sis5_speeds': self.ignore_sis5_speeds_chk.isChecked(),
+                'x_axis_limits_enabled': self.prm_plot_lim_gb.isChecked(),
+                'x_axis_min': self.prm_plot_min_tb.text(),
+                'x_axis_max': self.prm_plot_max_tb.text(),
+                'rx_noise_range_enabled': self.binned_rxnoise_range_gb.isChecked(),
+                'rx_noise_min': self.binned_rxnoise_min_tb.text(),
+                'rx_noise_max': self.binned_rxnoise_max_tb.text(),
+                'error_bars_enabled': self.binned_error_type_gb.isChecked(),
+                'error_bar_type': self.binned_error_type_cb.currentText(),
+                'individual_measurements_enabled': self.binned_individual_gb.isChecked(),
+                'individual_measurements': self.binned_individual_cb.currentText(),
+                'parse_test_params': self.parse_test_params_gb.isChecked(),
+                'current_kt': self.current_tb.text(),
+                'current_direction': self.current_dir_cbox.currentText(),
+                'swell_direction_deg': self.swell_dir_tb.text(),
+                'custom_test_params': self.custom_param_gb.isChecked(),
+                'custom_minimum': self.prm_min_tb.text(),
+                'custom_maximum': self.prm_max_tb.text(),
+                'custom_interval': self.prm_int_tb.text(),
+                'custom_tests_per_interval': self.num_tests_tb.text(),
+                'custom_total_tests': self.total_num_tests_tb.text(),
+            },
+        }
+        if self._analysis_colormap_uses_center(colormap):
+            record['colormap_center'] = self.redblue_center_spin.value()
+        return record
+
+    def _plots_written_since(self, output_dir, started):
+        """PNG plot files written or updated during this export."""
+        written = []
+        try:
+            names = os.listdir(output_dir)
+        except OSError:
+            return written
+        for fname in names:
+            if not fname.lower().endswith('.png'):
+                continue
+            path = os.path.join(output_dir, fname)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if mtime >= started - 1.0:
+                written.append((mtime, fname))
+        written.sort()
+        return [fname for _mtime, fname in written]
+
+    def _write_analysis_json(self, output_dir, plot_names):
+        """Write one analysis JSON named from the first plot saved in this export."""
+        if not plot_names:
+            raise RuntimeError('No plot files were saved, so no analysis file was written.')
+        stem = os.path.splitext(plot_names[0])[0]
+        json_path = os.path.join(output_dir, stem + '.json')
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(self._analysis_record(), f, indent=2)
+        self.update_log(f'Wrote analysis file {os.path.basename(json_path)}')
+        return json_path
+
+    def import_analysis(self):
+        """Load an analysis JSON file, restore its settings, and plot again."""
+        config = load_bist_session_config()
+        default_dir = config.get('last_output_directory',
+                                 os.getenv('USERPROFILE') or os.getenv('HOME') or os.getcwd())
+        json_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, 'Import analysis', default_dir, 'Analysis JSON (*.json)')
+        if not json_path:
+            self.update_log('Import cancelled.')
+            return
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                record = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            QtWidgets.QMessageBox.critical(self, 'Import failed', f'Could not read analysis file:\n{e}')
+            return
+        if not isinstance(record, dict) or not record.get('files'):
+            QtWidgets.QMessageBox.warning(self, 'Import failed', 'This JSON file does not contain an analysis file list.')
+            return
+        files = [str(p).replace('\\', '/') for p in record['files']]
+        missing = [p for p in files if not os.path.isfile(p)]
+        if missing:
+            listed = '\n'.join(missing)
+            self.update_log('Import stopped. Missing BIST file(s):\n' + listed)
+            QtWidgets.QMessageBox.warning(
+                self, 'Import failed',
+                'These BIST files from the analysis could not be found:\n\n' + listed)
+            return
+        try:
+            self._restore_analysis(record, files)
+        except Exception as e:
+            self.update_log(f'Error importing analysis: {e}')
             import traceback
             self.update_log(traceback.format_exc())
-            QtWidgets.QMessageBox.critical(self, 'Export failed', str(e))
+            QtWidgets.QMessageBox.critical(self, 'Import failed', str(e))
+            return
+        self.update_log(f'Imported analysis from {json_path}')
+        self.plot_bist()
+        if not getattr(self, 'all_figures', None):
+            QtWidgets.QMessageBox.warning(self, 'Import', 'Settings were restored, but no plots were created.')
+            return
+        QtWidgets.QMessageBox.information(self, 'Import complete', 'The analysis plots have been recreated.')
+
+    def _restore_analysis(self, record, files):
+        """Load analysis files and put the saved settings back into the controls."""
+        self.all_figures = []
+        self.frequency_data = []
+        self.total_charts = 0
+        self.current_chart_index = 0
+        self._update_export_button()
+
+        failed = self._add_verified_bist_files(files)
+        if failed:
+            raise RuntimeError('Could not add BIST file(s):\n' + '\n'.join(failed))
+
+        params = record.get('plot_parameters') or {}
+        sys_info = record.get('system_information') or {}
+        plot_noise = record.get('plot_noise')
+        if plot_noise == 'vs. Azimuth':
+            swell = str(params.get('swell_direction_deg', '')).strip()
+            if swell and swell != self.swell_dir_default:
+                self.swell_dir_tb.setText(swell)
+                self.swell_dir_updated = True
+
+        self._apply_analysis_system_info(sys_info)
+
+        self.type_cbox.blockSignals(True)
+        self.noise_test_type_cbox.blockSignals(True)
+        try:
+            bist_type = record.get('bist_type', '')
+            type_index = self.type_cbox.findText(bist_type)
+            if type_index < 0:
+                raise RuntimeError(f'BIST type {bist_type!r} is not available.')
+            self.type_cbox.setCurrentIndex(type_index)
+            if plot_noise:
+                noise_index = self.noise_test_type_cbox.findText(plot_noise)
+                if noise_index < 0:
+                    raise RuntimeError(f'Plot noise {plot_noise!r} is not available.')
+                self.noise_test_type_cbox.setCurrentIndex(noise_index)
         finally:
-            import matplotlib.pyplot as plt
-            for fig_num in plt.get_fignums():
-                fig = plt.figure(fig_num)
-                if fig not in getattr(self, 'all_figures', []):
-                    plt.close(fig)
+            self.type_cbox.blockSignals(False)
+            self.noise_test_type_cbox.blockSignals(False)
+        self.update_buttons()
+
+        if plot_noise != 'vs. Azimuth' and params.get('test_units'):
+            self._set_noise_param_unit(params['test_units'])
+        if params.get('filename_string') is not None:
+            self.prm_str_tb.setText(str(params['filename_string']))
+            self.noise_params[self.prm_unit_cbox.currentText()] = self.prm_str_tb.text()
+        if params.get('sort_order'):
+            sort_index = self.sort_cbox.findText(params['sort_order'])
+            if sort_index >= 0:
+                self.sort_cbox.setCurrentIndex(sort_index)
+        if 'ignore_sis5_speeds' in params:
+            self._ignore_sis5_syncing = True
+            self.ignore_sis5_speeds_chk.setChecked(bool(params['ignore_sis5_speeds']))
+            self._ignore_sis5_syncing = False
+            if self.prm_unit_cbox.currentText() == 'SOG (kt)':
+                self._ignore_sis5_user_disabled_on_sog = not self.ignore_sis5_speeds_chk.isChecked()
+
+        self.prm_plot_lim_gb.setChecked(bool(params.get('x_axis_limits_enabled', False)))
+        self.prm_plot_min_tb.setText(str(params.get('x_axis_min', self.prm_plot_min_tb.text())))
+        self.prm_plot_max_tb.setText(str(params.get('x_axis_max', self.prm_plot_max_tb.text())))
+        self.binned_rxnoise_range_gb.setChecked(bool(params.get('rx_noise_range_enabled', True)))
+        self.binned_rxnoise_min_tb.setText(str(params.get('rx_noise_min', self.binned_rxnoise_min_tb.text())))
+        self.binned_rxnoise_max_tb.setText(str(params.get('rx_noise_max', self.binned_rxnoise_max_tb.text())))
+        self.binned_error_type_gb.setChecked(bool(params.get('error_bars_enabled', True)))
+        error_index = self.binned_error_type_cb.findText(params.get('error_bar_type', ''))
+        if error_index >= 0:
+            self.binned_error_type_cb.setCurrentIndex(error_index)
+        self.binned_individual_gb.setChecked(bool(params.get('individual_measurements_enabled', True)))
+        individual_index = self.binned_individual_cb.findText(params.get('individual_measurements', ''))
+        if individual_index >= 0:
+            self.binned_individual_cb.setCurrentIndex(individual_index)
+        if 'parse_test_params' in params:
+            self.parse_test_params_gb.setChecked(bool(params['parse_test_params']))
+        self.current_tb.setText(str(params.get('current_kt', self.current_tb.text())))
+        current_index = self.current_dir_cbox.findText(params.get('current_direction', ''))
+        if current_index >= 0:
+            self.current_dir_cbox.setCurrentIndex(current_index)
+        if params.get('swell_direction_deg') is not None:
+            self.swell_dir_tb.setText(str(params['swell_direction_deg']))
+            self.swell_dir_updated = self.swell_dir_tb.text().strip() not in ('', self.swell_dir_default)
+
+        self.prm_min_tb.setText(str(params.get('custom_minimum', self.prm_min_tb.text())))
+        self.prm_max_tb.setText(str(params.get('custom_maximum', self.prm_max_tb.text())))
+        self.prm_int_tb.setText(str(params.get('custom_interval', self.prm_int_tb.text())))
+        self.num_tests_tb.setText(str(params.get('custom_tests_per_interval', self.num_tests_tb.text())))
+        if params.get('custom_total_tests') is not None:
+            self.total_num_tests_tb.setText(str(params['custom_total_tests']))
+        self.custom_param_gb.setChecked(bool(params.get('custom_test_params', False)))
+        if self.custom_param_gb.isChecked():
+            self.update_param_info()
+
+        colormap = record.get('colormap')
+        if colormap:
+            self.cmap_cbox.blockSignals(True)
+            cmap_index = self.cmap_cbox.findText(colormap)
+            if cmap_index < 0:
+                self.cmap_cbox.blockSignals(False)
+                raise RuntimeError(f'Colormap {colormap!r} is not available.')
+            self.cmap_cbox.setCurrentIndex(cmap_index)
+            self.cmap_cbox.blockSignals(False)
+            self.redblue_center_spin.setVisible(self._analysis_colormap_uses_center(colormap))
+        if 'colormap_center' in record:
+            self.redblue_center_spin.setValue(float(record['colormap_center']))
+
+        wanted = set(files)
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            item.setSelected((item.data(1) or '').replace('\\', '/') in wanted)
+        into_seas = record.get('into_seas_file')
+        if into_seas:
+            into_seas = str(into_seas).replace('\\', '/')
+            for i in range(self.file_list.count()):
+                item = self.file_list.item(i)
+                if (item.data(1) or '').replace('\\', '/') == into_seas:
+                    self.set_file_into_seas(item, True)
+                    break
+        if params.get('swell_direction_deg') is not None:
+            self.swell_dir_tb.setText(str(params['swell_direction_deg']))
+            self.swell_dir_updated = self.swell_dir_tb.text().strip() not in ('', self.swell_dir_default)
+
+    def _apply_analysis_system_info(self, sys_info):
+        """Restore system-information fields and keep file verification from replacing them."""
+        model = sys_info.get('model', '')
+        model_index = self.model_cbox.findText(model)
+        if model and model_index >= 0:
+            self.model_cbox.setCurrentIndex(model_index)
+            self.model_updated = True
+        serial = str(sys_info.get('serial_number', '')).strip()
+        self._sn_programmatic_update = True
+        self.sn_tb.setText(serial)
+        self._sn_programmatic_update = False
+        self._sn_user_entered = bool(serial)
+        self.sn_updated = bool(serial)
+        ship = str(sys_info.get('ship_name', '')).strip()
+        if self._is_undefined_sysinfo(ship):
+            self._set_optional_sysinfo_undefined(self.ship_tb)
+        else:
+            self.ship_tb.setText(ship)
+            self.ship_tb.setStyleSheet('color: cyan;')
+        description = str(sys_info.get('description', '')).strip()
+        if self._is_undefined_sysinfo(description):
+            self._set_optional_sysinfo_undefined(self.cruise_tb)
+        else:
+            self.cruise_tb.setText(description)
+            self.cruise_tb.setStyleSheet('color: cyan;')
+        if sys_info.get('date') is not None:
+            self.date_tb.setText(str(sys_info['date']))
+            self.date_updated = True
+        self.refresh_system_info_from_ui()
+
+    def _add_verified_bist_files(self, paths):
+        """Add BIST paths that are not already listed. Returns paths that could not be added."""
+        self.get_current_file_list()
+        existing = {(p or '').replace('\\', '/') for p in self.filenames}
+        failed = []
+        for raw in paths:
+            path = str(raw).replace('\\', '/')
+            if path in existing:
+                continue
+            bist_type, sis_ver_found = read_bist.verify_bist_type(path)
+            if not bist_type or 0 in bist_type:
+                failed.append(path)
+                continue
+            parts = path.rsplit('/', 1)
+            if len(parts) != 2 or not parts[1].rsplit('.', 1)[0]:
+                failed.append(path)
+                continue
+            file_path, fname = parts
+            new_item = QtWidgets.QListWidgetItem()
+            new_item.setData(1, path)
+            new_item.setText((file_path + '/') * int(self.show_path_chk.isChecked()) + fname)
+            self.file_list.addItem(new_item)
+            existing.add(path)
+            bist_types_found = [self.bist_list[idx] for idx in bist_type if idx < len(self.bist_list)]
+            self.update_log('Added ' + fname + ' (SIS ' + str(sis_ver_found) + ': ' +
+                            ', '.join(bist_types_found) + ')')
+        self.get_current_file_list()
+        self.current_fnum_lbl.setText('Current file count: ' + str(len(self.filenames)))
+        return failed
 
     def save_session(self):  # save current session data to file
         try:
             session_data = {
                 'serial_number': self.sn_tb.text(),
-                'ship_name': self.ship_tb.text(),
-                'description': self.cruise_tb.text(),
+                'ship_name': self._optional_sysinfo_text(self.ship_tb),
+                'description': self._optional_sysinfo_text(self.cruise_tb),
                 'x_axis_min': self.prm_min_tb.text(),
                 'x_axis_max': self.prm_max_tb.text(),
                 'y_axis_min': self.binned_rxnoise_min_tb.text(),
@@ -1540,8 +1913,8 @@ class MainWindow(QtWidgets.QMainWindow):
             
             # Reset to default values
             self.sn_tb.setText('')
-            self.ship_tb.setText('')
-            self.cruise_tb.setText('')
+            self._set_optional_sysinfo_undefined(self.ship_tb)
+            self._set_optional_sysinfo_undefined(self.cruise_tb)
             self.prm_min_tb.setText('')
             self.prm_max_tb.setText('')
             self.binned_rxnoise_min_tb.setText('')
@@ -1574,10 +1947,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._sn_programmatic_update = True
                 self.sn_tb.setText(config['serial_number'])
                 self._sn_programmatic_update = False
-            if 'ship_name' in config and config['ship_name']:
+            if 'ship_name' in config and not self._is_undefined_sysinfo(config['ship_name']):
                 self.ship_tb.setText(config['ship_name'])
-            if 'description' in config and config['description']:
+                self.ship_tb.setStyleSheet('color: cyan;')
+            else:
+                self._set_optional_sysinfo_undefined(self.ship_tb)
+            if 'description' in config and not self._is_undefined_sysinfo(config['description']):
                 self.cruise_tb.setText(config['description'])
+                self.cruise_tb.setStyleSheet('color: cyan;')
+            else:
+                self._set_optional_sysinfo_undefined(self.cruise_tb)
             if 'x_axis_min' in config and config['x_axis_min']:
                 self.update_log(f'Debug: Setting X-axis min to: {config["x_axis_min"]}')
                 self.prm_min_tb.setText(config['x_axis_min'])
@@ -1777,13 +2156,41 @@ class MainWindow(QtWidgets.QMainWindow):
         for f in range(len(self.filenames)):
             self.file_list.item(f).setSelected(False)  # clear any pre-selected items before re-selecting verified ones
 
+    def _is_undefined_sysinfo(self, text):
+        """True when a ship name or description has not been entered."""
+        return str(text).strip() in ('', '?')
+
+    def _optional_sysinfo_text(self, widget):
+        """Ship name or description for titles and saved data; '' while unset."""
+        text = widget.text().strip()
+        return '' if self._is_undefined_sysinfo(text) else text
+
+    def _set_optional_sysinfo_undefined(self, widget):
+        """Show a magenta ? until the user enters a ship name or description."""
+        widget.blockSignals(True)
+        widget.setText('?')
+        widget.blockSignals(False)
+        widget.setStyleSheet('color: magenta;')
+
+    def _refresh_optional_sysinfo_style(self, widget):
+        if self._is_undefined_sysinfo(widget.text()):
+            widget.setStyleSheet('color: magenta;')
+        else:
+            widget.setStyleSheet('color: white;')
+
+    def _finalize_optional_sysinfo(self, widget):
+        if self._is_undefined_sysinfo(widget.text()):
+            self._set_optional_sysinfo_undefined(widget)
+        else:
+            widget.setStyleSheet('color: cyan;')
+
     def _system_info_snapshot(self):
         """Tuple of current system-information field values for change detection."""
         return (
             self.model_cbox.currentText().replace('EM', '').strip(),
             self.sn_tb.text().strip(),
-            self.ship_tb.text().strip(),
-            self.cruise_tb.text().strip(),
+            self._optional_sysinfo_text(self.ship_tb),
+            self._optional_sysinfo_text(self.cruise_tb),
             self.date_tb.text().strip(),
         )
 
@@ -1806,7 +2213,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if sender not in sys_info_widgets:
             return
 
-        sender.setStyleSheet('color: cyan')
+        if sender in (self.ship_tb, self.cruise_tb):
+            self._finalize_optional_sysinfo(sender)
+        else:
+            sender.setStyleSheet('color: cyan')
         if sender.objectName() in self.missing_fields:
             self.missing_fields.remove(sender.objectName())
 
@@ -1851,6 +2261,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log(f"Auto-plotting noise type: {self.noise_test_type_cbox.currentText()}")
             # Call the plot generation method
             self.plot_bist()
+
+    def _on_colormap_changed(self, _text=None):
+        """Redraw the current RX noise heatmap with the colormap just selected."""
+        cmap = self.cmap_cbox.currentText().lower().strip()
+        center = self.redblue_center_spin.value()
+        for plot_data in getattr(self, 'frequency_data', []) or []:
+            if plot_data.get('plot_type') == 'rx_noise':
+                plot_data['cmap'] = cmap
+                plot_data['redblue_center'] = center
+        if not self.frequency_data or not (0 <= self.current_chart_index < len(self.frequency_data)):
+            return
+        if self.frequency_data[self.current_chart_index].get('plot_type') != 'rx_noise':
+            return
+        self.auto_update_plot()
 
     def auto_update_plot(self):
         """Auto-update plot when system info or RX noise testing settings change"""
@@ -1912,17 +2336,13 @@ class MainWindow(QtWidgets.QMainWindow):
                         param_adjust *= float([-1 if 'with' in self.current_dir_cbox.currentText().lower() else 1][0])
                     current_freq_data['param_adjust'] = param_adjust
                     
-                    # Update binned RX noise Y-axis range
-                    binned_range_lims = []
-                    if self.binned_rxnoise_range_gb.isChecked():
-                        try:
-                            binned_min = float(self.binned_rxnoise_min_tb.text())
-                            binned_max = float(self.binned_rxnoise_max_tb.text())
-                            binned_range_lims = [binned_min, binned_max]
-                        except ValueError:
-                            self.update_log('Warning: Invalid binned RX noise range values, using default range')
+                    # RX noise range: binned Y-axis and heatmap color ramp
+                    binned_range_lims = self._rx_noise_range_lims()
                     current_freq_data['binned_range_lims'] = binned_range_lims
                     current_freq_data['sort'] = self.sort_cbox.currentText().lower().strip()
+                    if current_freq_data.get('plot_type') == 'rx_noise':
+                        current_freq_data['cmap'] = self.cmap_cbox.currentText().lower().strip()
+                        current_freq_data['redblue_center'] = self.redblue_center_spin.value()
                     
                     # Update the BIST data structure with new system info for title generation
                     bist_data = current_freq_data['bist']
@@ -1994,6 +2414,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             param_unit=current_freq_data['param_unit'],
                             param_adjust=param_adjust,
                             param_lims=current_freq_data['param_lims'],
+                            noise_lims=binned_range_lims,
                             cmap=current_freq_data.get('cmap', 'jet'),
                             sort=current_freq_data.get('sort', 'ascending'),
                             redblue_center=current_freq_data.get('redblue_center', 55),
@@ -2161,6 +2582,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.freq_list = []  # Store chart names
         self.last_plotted_bist = None
         self.last_bist_test_type = None
+        self.last_plotted_files = []
+        self.last_into_seas_file = None
         self._clear_export_button_highlight()
         self._update_export_button()
         self.update_navigation_controls()
@@ -2627,8 +3050,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
                     # store other fields
                     bist_temp['sis_version'] = sis_ver_found  # store SIS version
-                    bist_temp['ship_name'] = self.ship_tb.text()  # store ship name
-                    bist_temp['cruise_name'] = self.cruise_tb.text()  # store cruise name
+                    bist_temp['ship_name'] = self._optional_sysinfo_text(self.ship_tb)
+                    bist_temp['cruise_name'] = self._optional_sysinfo_text(self.cruise_tb)
 
                     # append dicts
                     print('starting to append bist_temp dict')
@@ -2652,6 +3075,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_sn_title_metadata(bist)
             self.last_plotted_bist = bist
             self.last_bist_test_type = bist_test_type
+            failed = {str(f).replace('\\', '/') for f in bist_fail_list}
+            self.last_plotted_files = [f.replace('\\', '/') for f in fnames_sel
+                                       if f.replace('\\', '/') not in failed]
+            self.last_into_seas_file = None
+            for i in range(self.file_list.count()):
+                item = self.file_list.item(i)
+                path = (item.data(1) or '').replace('\\', '/')
+                if self.file_into_seas_str in item.text() and path in self.last_plotted_files:
+                    self.last_into_seas_file = path
+                    break
 
             if bist_test_type == self.bist_list[1]:  # TX Channels
                 # Initialize navigation for TX channel plots
@@ -2855,15 +3288,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # For binned plots, we need to use 'speed' as the test_type for the plotting function
                     plot_test_type = 'speed'
                     
-                    # Get binned RX noise range parameters if group box is checked
-                    binned_range_lims = []
-                    if self.binned_rxnoise_range_gb.isChecked():
-                        try:
-                            binned_min = float(self.binned_rxnoise_min_tb.text())
-                            binned_max = float(self.binned_rxnoise_max_tb.text())
-                            binned_range_lims = [binned_min, binned_max]
-                        except ValueError:
-                            self.update_log('Warning: Invalid binned RX noise range values, using default range')
+                    binned_range_lims = self._rx_noise_range_lims()
                     
                     # Handle multiple frequencies for binned plotting (same logic as regular plotting)
                     if len(set(freq_list)) == 1:
@@ -3006,15 +3431,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # For 2kt binned plots, we need to use 'speed' as the test_type for the plotting function
                     plot_test_type = 'speed'
                     
-                    # Get binned RX noise range parameters if group box is checked
-                    binned_range_lims = []
-                    if self.binned_rxnoise_range_gb.isChecked():
-                        try:
-                            binned_min = float(self.binned_rxnoise_min_tb.text())
-                            binned_max = float(self.binned_rxnoise_max_tb.text())
-                            binned_range_lims = [binned_min, binned_max]
-                        except ValueError:
-                            self.update_log('Warning: Invalid binned RX noise range values, using default range')
+                    binned_range_lims = self._rx_noise_range_lims()
                     
                     # Handle multiple frequencies for 2kt binned plotting (same logic as regular plotting)
                     if len(set(freq_list)) == 1:
@@ -3162,15 +3579,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log(f'Generating binned RX noise plot ({discrete_label} bins)...')
                     plot_test_type = 'speed'
                     
-                    # Get binned RX noise range parameters if group box is checked
-                    binned_range_lims = []
-                    if self.binned_rxnoise_range_gb.isChecked():
-                        try:
-                            binned_min = float(self.binned_rxnoise_min_tb.text())
-                            binned_max = float(self.binned_rxnoise_max_tb.text())
-                            binned_range_lims = [binned_min, binned_max]
-                        except ValueError:
-                            self.update_log('Warning: Invalid binned RX noise range values, using default range')
+                    binned_range_lims = self._rx_noise_range_lims()
                     
                     # Handle multiple frequencies for discrete binned plotting (same logic as regular plotting)
                     if len(set(freq_list)) == 1:
@@ -3316,7 +3725,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.update_log(f'No valid {discrete_label} binned plots generated')
                             return
                 else:
-                    # Regular plotting (not binned)
+                    # Regular plotting (not binned). Empty range keeps the 30-70 dB color ramp.
+                    noise_lims = self._rx_noise_range_lims()
                     if len(set(freq_list)) == 1:
                     # if len(set((bist['frequency'][0][0]))) == 1:  # single frequency detected, single plot
                         print('single frequency found in RX Noise test')
@@ -3341,6 +3751,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'param_unit': self.prm_unit_cbox.currentText(),
                                 'param_adjust': param_adjust,
                                 'param_lims': param_lims,
+                                'noise_lims': noise_lims,
                                 'cmap': self.cmap_cbox.currentText().lower().strip(),
                                 'sort': self.sort_cbox.currentText().lower().strip(),
                                 'redblue_center': self.redblue_center_spin.value()
@@ -3355,6 +3766,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                      param_unit=self.prm_unit_cbox.currentText(),
                                                                      param_adjust=param_adjust,
                                                                      param_lims=param_lims,
+                                                                     noise_lims=noise_lims,
                                                                      cmap=self.cmap_cbox.currentText().lower().strip(),
                                                                      sort=self.sort_cbox.currentText().lower().strip(),
                                                                      redblue_center=self.redblue_center_spin.value(),
@@ -3412,6 +3824,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'param_unit': param_unit,
                                     'param_adjust': param_adjust,
                                     'param_lims': param_lims,
+                                    'noise_lims': noise_lims,
                                     'cmap': self.cmap_cbox.currentText().lower().strip(),
                                     'sort': self.sort_cbox.currentText().lower().strip(),
                                     'redblue_center': self.redblue_center_spin.value()
@@ -3426,6 +3839,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                          param_unit=param_unit,
                                                                          param_adjust=param_adjust,
                                                                          param_lims=param_lims,
+                                                                         noise_lims=noise_lims,
                                                                          cmap=self.cmap_cbox.currentText().lower().strip(),
                                                                          sort=self.sort_cbox.currentText().lower().strip(),
                                                                          redblue_center=self.redblue_center_spin.value(),
@@ -3837,6 +4251,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.swell_dir_updated = True
 
     def eventFilter(self, source, event):
+        # Select the unset marker so the next keystroke replaces it
+        if (event.type() == QEvent.Type.FocusIn and source in (self.ship_tb, self.cruise_tb)
+                and source.text().strip() == '?'):
+            QTimer.singleShot(0, source.selectAll)
+
         # enable user to right-click and set a file "INTO SEAS" for the noise vs azimuth test
         if (event.type() == QEvent.Type.ContextMenu and source is self.file_list) and \
                 self.noise_test_type_cbox.currentText() == 'vs. Azimuth':
@@ -4035,6 +4454,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                    param_unit=plot_data['param_unit'],
                                                    param_adjust=plot_data['param_adjust'],
                                                    param_lims=plot_data['param_lims'],
+                                                   noise_lims=self._rx_noise_range_lims(),
                                                    cmap=plot_data['cmap'],
                                                    sort=plot_data['sort'],
                                                    redblue_center=plot_data.get('redblue_center', 55),

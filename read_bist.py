@@ -2928,7 +2928,8 @@ def attach_rx_channel_hover(fig, canvas=None):
 
 # plot RX Noise versus speed or azimuth
 def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test_type='speed',
-                  param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], cmap='jet', redblue_center=55,
+                  param=[], param_unit='SOG (kts)', param_adjust=0.0, param_lims=[], noise_lims=[],
+                  cmap='jet', redblue_center=55,
                   return_fig=False, gui_embed=False):
     # declare array for plotting all tests with nrows = n_elements and ncols = n_tests
     # np.size returns number of items if all lists are same length (e.g., AutoBIST script in SIS 4), but returns number
@@ -3110,9 +3111,18 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     # plot rxn vs test number
     ax2 = plt.subplot(gs[1])
     
-    # Check if data exceeds colorbar range and warn user
-    vmin = 30
-    vmax = 70
+    # Color ramp: user RX noise range when provided, otherwise 30-70 dB.
+    # Values outside the ramp stay black (under) and magenta (over).
+    vmin = 30.0
+    vmax = 70.0
+    if len(noise_lims) == 2:
+        try:
+            vmin = float(noise_lims[0])
+            vmax = float(noise_lims[1])
+            print(f'Set RX noise color range to: {vmin} - {vmax} dB')
+        except (TypeError, ValueError):
+            print(f'Warning: Invalid RX noise range values: {noise_lims}, using 30-70 dB')
+            vmin, vmax = 30.0, 70.0
     data_min = np.nanmin(rxn_all)
     data_max = np.nanmax(rxn_all)
     
@@ -3369,8 +3379,9 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
         freq_title = 'Unknown'
 
     title_str = ('RX Noise vs. ' + test_type.capitalize() + '\n' +
-                 em_model_id_for_title(rxn) + '\n' +
-                 'Freq: ' + freq_title + ' - Date: ' + date_str)
+                 ship_title_prefix(rxn.get('ship_name')) + em_model_id_for_title(rxn) +
+                 description_title_suffix(rxn.get('cruise_name')) + '\n' +
+                 'Freq: ' + freq_title + ' - ' + binned_date_title(date_str))
     try:
         fig.suptitle(title_str, fontsize=16)
     except Exception as e:
@@ -3491,6 +3502,53 @@ def format_title_id_clause(sn=None, filenames=None, user_sn=None, user_entered=F
     if len(bases) == 1:
         return f' (F/N {bases[0]})'
     return ''
+
+
+def defined_title_text(value):
+    """Return a title fragment value, or '' when it is missing or the unset marker '?'."""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ''
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if text in ('', '?', 'None'):
+        return ''
+    return text
+
+
+def ship_title_prefix(ship_name):
+    """'Ship - ' when a ship name is defined, otherwise ''."""
+    text = defined_title_text(ship_name)
+    return f'{text} - ' if text else ''
+
+
+def description_title_suffix(description):
+    """' - text' when a description is defined, otherwise ''."""
+    text = defined_title_text(description)
+    return f' - {text}' if text else ''
+
+
+def binned_date_title(date):
+    """Date text for plot titles. A defined date is shown without a 'Date:' label."""
+    text = defined_date_text(date)
+    if text:
+        return text
+    if isinstance(date, (list, tuple)):
+        date = date[0] if date else ''
+    raw = '' if date is None else str(date).strip()
+    if raw in ('', '?', 'None'):
+        return 'Date: Unknown'
+    return f'Date: {raw}'
+
+
+def defined_date_text(date):
+    """Return a real date string, or '' when the date is missing or a placeholder."""
+    if isinstance(date, (list, tuple)):
+        date = date[0] if date else ''
+    text = '' if date is None else str(date).strip()
+    if text in ('', '?', 'None', 'Unknown', 'YYYY-MM-DD'):
+        return ''
+    return text
 
 
 def format_em_title_model_line(model, sn=None, filenames=None, user_sn=None, user_entered=False):
@@ -4105,18 +4163,14 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     # Count total number of tests
     total_tests = len(all_params)
     
-    # Get ship name if available
-    ship_name = rxn.get('ship_name', [''])[0] if rxn.get('ship_name') else ''
-    ship_display = f'{ship_name} - ' if ship_name else ''
-    
-    # Get description if available
-    description = rxn.get('cruise_name', [''])[0] if rxn.get('cruise_name') else ''
-    description_display = f'Description: {description} - ' if description else ''
+    ship_display = ship_title_prefix(rxn.get('ship_name'))
+    description_suffix = description_title_suffix(rxn.get('cruise_name'))
+    date_suffix = defined_date_text(date_str)
+    date_suffix = f' - {date_suffix}' if date_suffix else ''
     
     title_str = f'RX Noise vs {test_type.capitalize()} (Binned)\n' + \
-                f'{ship_display}{em_model_id_for_title(rxn)}\n' + \
-                f'{description_display}Date: {date_str}\n' + \
-                f'Freq: {freq_display} - Total Tests: {total_tests}'
+                f'{ship_display}{em_model_id_for_title(rxn)}{description_suffix}\n' + \
+                f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}'
     
     ax.set_title(title_str, fontsize=14, fontweight='bold')
     
@@ -4160,12 +4214,12 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     ax.legend(loc='upper left')
     _apply_binned_xaxis_sort(ax, sort)
     
-    # Adjust layout with extra top margin to prevent title overlap
-    plt.subplots_adjust(top=0.85, left=0.1, right=0.95, bottom=0.1)  # Add extra space at the top
+    # Three-line title; top margin leaves room for the title and gives the axes the rest
+    plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
     
     # Apply layout for PNG exports to match GUI appearance
     if save_figs:
-        plt.subplots_adjust(top=0.88, left=0.1, right=0.95, bottom=0.1)  # Add small top margin for title
+        plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
     
     # Save the figure
     if save_figs:
@@ -4542,18 +4596,14 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         # Count total number of tests
         total_tests = len(all_params)
         
-        # Get ship name if available
-        ship_name = rxn.get('ship_name', [''])[0] if rxn.get('ship_name') else ''
-        ship_display = f'{ship_name} - ' if ship_name else ''
-        
-        # Get description if available
-        description = rxn.get('cruise_name', [''])[0] if rxn.get('cruise_name') else ''
-        description_display = f'Description: {description} - ' if description else ''
+        ship_display = ship_title_prefix(rxn.get('ship_name'))
+        description_suffix = description_title_suffix(rxn.get('cruise_name'))
+        date_suffix = defined_date_text(date_str)
+        date_suffix = f' - {date_suffix}' if date_suffix else ''
         
         title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - 2kt\n' +
-                    f'{ship_display}{em_model_id_for_title(rxn)}\n' +
-                    f'{description_display}Date: {date_str}\n' +
-                    f'Freq: {freq_display} - Total Tests: {total_tests}')
+                    f'{ship_display}{em_model_id_for_title(rxn)}{description_suffix}\n' +
+                    f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}')
         
         ax.set_title(title_str, fontsize=14, fontweight='bold')
         
@@ -4584,12 +4634,12 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         
         _apply_binned_xaxis_sort(ax, sort)
         
-        # Adjust layout with extra top margin to prevent title overlap
-        plt.subplots_adjust(top=0.85, left=0.1, right=0.95, bottom=0.1)  # Add extra space at the top
+        # Three-line title; top margin leaves room for the title and gives the axes the rest
+        plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
         
         # Apply layout for PNG exports to match GUI appearance
         if save_figs:
-            plt.subplots_adjust(top=0.88, left=0.1, right=0.95, bottom=0.1)  # Add small top margin for title
+            plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
         
         # Save the figure
         if save_figs:
@@ -4692,8 +4742,11 @@ def plot_rx_noise_binned_combined_frequencies(rxn_all_frequencies, save_figs=Tru
     except:
         date_str = 'Unknown'
     
-    title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - {bin_size}kt - All Frequencies\n' +
-                f'{em_model_id_for_title(rxn_all_frequencies[0])} - {date_str}')
+    date_suffix = defined_date_text(date_str)
+    date_suffix = f' - {date_suffix}' if date_suffix else ''
+    title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - {bin_size}kt - All Frequencies{date_suffix}\n' +
+                f'{em_model_id_for_title(rxn_all_frequencies[0])}' +
+                description_title_suffix(rxn_all_frequencies[0].get('cruise_name')))
     ax.set_title(title_str, fontsize=14, fontweight='bold')
     
     # Add legend
@@ -5080,17 +5133,13 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     model = rxn.get('model', ['Unknown'])[0] if rxn.get('model') else 'Unknown'
     sn = rxn.get('sn', ['Unknown'])[0] if rxn.get('sn') else 'Unknown'
     
-    # Get ship name if available
-    ship_name = rxn.get('ship_name', [''])[0] if rxn.get('ship_name') else ''
-    ship_display = f'{ship_name} - ' if ship_name else ''
-    
-    # Get description if available
-    description = rxn.get('cruise_name', [''])[0] if rxn.get('cruise_name') else ''
-    description_display = f'Description: {description} - ' if description else ''
+    ship_display = ship_title_prefix(rxn.get('ship_name'))
+    description_suffix = description_title_suffix(rxn.get('cruise_name'))
     
     # Get date if available
     date = rxn.get('date', [''])[0] if rxn.get('date') else ''
-    date_display = f'Date: {date}' if date else 'Date: Unknown'
+    date_suffix = defined_date_text(date)
+    date_suffix = f' - {date_suffix}' if date_suffix else ''
     
     # Get frequency information
     freq = rxn.get('frequency', ['Unknown'])[0] if rxn.get('frequency') else 'Unknown'
@@ -5102,9 +5151,8 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     total_tests = sum(binned_counts.values()) if binned_counts else 0
     
     title_str = (f'RX Noise vs {param_unit} (Binned)\n' +
-                f'{ship_display}{em_model_id_for_title(rxn)}\n' +
-                f'{description_display}{date_display}\n' +
-                f'Freq: {freq_display} - Total Tests: {total_tests}')
+                f'{ship_display}{em_model_id_for_title(rxn)}{description_suffix}\n' +
+                f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}')
     
     ax.set_title(title_str, fontsize=12, fontweight='bold', pad=20)
     ax.set_xlabel(param_unit, fontsize=12, fontweight='bold')
@@ -5113,10 +5161,11 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     ax.grid(True, alpha=0.3)
     _apply_binned_xaxis_sort(ax, sort)
     
-    # Adjust layout to prevent title overlap
-    plt.subplots_adjust(top=0.85, left=0.1, right=0.95, bottom=0.1)
+    # Three-line title; top margin leaves room for the title and gives the axes the rest
+    plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
     
     if save_figs:
+        plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
         # Save the figure
         date_str = rxn.get('date', ['Unknown'])[0] if rxn.get('date') else 'Unknown'
         clean_date_str = date_str.replace("/", "").replace("-", "")
@@ -5132,9 +5181,6 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
                     f'EM{model}_SN_{sn}_{clean_date_str}_{clean_freq_display}.png')
         print('Saving', fig_name)
         fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
-        
-        # Adjust layout for PNG export
-        plt.subplots_adjust(top=0.88, left=0.1, right=0.95, bottom=0.1)
     
     if return_fig:
         return fig, {
