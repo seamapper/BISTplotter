@@ -1471,9 +1471,59 @@ class MainWindow(QtWidgets.QMainWindow):
             error_bar_type=plot_data.get('error_bar_type', 'Standard Deviation'),
             individual_type=plot_data.get('individual_type', 'Non-binned (Light Grey)'),
             sort=plot_data.get('sort', 'ascending'),
+            source_heatmap=plot_data.get('source_heatmap', False),
+            cmap=plot_data.get('cmap', 'jet'),
+            redblue_center=plot_data.get('redblue_center', 55),
             return_fig=False)
         if isinstance(result, tuple):
             result = result[0]
+
+    def _append_binned_source_heatmap(self, plot_data, plot_fn):
+        """Add the binned plot plus the heatmap of BISTs that filled each bin."""
+        source_data = dict(plot_data)
+        source_data['source_heatmap'] = True
+        source_data['plot_type'] = 'rx_noise_binned_sources'
+        source_data['cmap'] = self.cmap_cbox.currentText().lower().strip()
+        source_data['redblue_center'] = self.redblue_center_spin.value()
+        try:
+            result = plot_fn(
+                source_data['bist'],
+                save_figs=False,
+                output_dir=self.output_dir,
+                test_type='speed',
+                param=source_data.get('param', []),
+                param_unit=source_data.get('param_unit', 'SOG (kt)'),
+                param_adjust=source_data.get('param_adjust', 0.0),
+                param_lims=source_data.get('param_lims', []),
+                binned_range_lims=source_data.get('binned_range_lims', []),
+                error_bar_type=source_data.get('error_bar_type', 'Standard Deviation'),
+                individual_type=source_data.get('individual_type', 'Non-binned (Light Grey)'),
+                sort=source_data.get('sort', 'ascending'),
+                source_heatmap=True,
+                cmap=source_data['cmap'],
+                redblue_center=source_data['redblue_center'],
+                return_fig=True)
+            figure = result[0] if isinstance(result, tuple) else result
+            if figure is None:
+                self.update_log('Binned source heatmap was not created')
+                return False
+            self.frequency_data.append(source_data)
+            self.all_figures.append(figure)
+            self.total_charts = len(self.all_figures)
+            return True
+        except Exception as e:
+            self.update_log(f'Error generating binned source heatmap: {e}')
+            return False
+
+    def _binned_source_kwargs(self, plot_data):
+        """Colormap arguments for the binned-plus-heatmap chart."""
+        if not plot_data.get('source_heatmap'):
+            return {}
+        return {
+            'source_heatmap': True,
+            'cmap': plot_data.get('cmap', self.cmap_cbox.currentText().lower().strip()),
+            'redblue_center': plot_data.get('redblue_center', self.redblue_center_spin.value()),
+        }
 
     def _prompt_export_directory(self):
         """Ask user for export directory; remember choice between sessions."""
@@ -2285,12 +2335,12 @@ class MainWindow(QtWidgets.QMainWindow):
         cmap = self.cmap_cbox.currentText().lower().strip()
         center = self.redblue_center_spin.value()
         for plot_data in getattr(self, 'frequency_data', []) or []:
-            if plot_data.get('plot_type') == 'rx_noise':
+            if plot_data.get('plot_type') in ('rx_noise', 'rx_noise_binned_sources'):
                 plot_data['cmap'] = cmap
                 plot_data['redblue_center'] = center
         if not self.frequency_data or not (0 <= self.current_chart_index < len(self.frequency_data)):
             return
-        if self.frequency_data[self.current_chart_index].get('plot_type') != 'rx_noise':
+        if self.frequency_data[self.current_chart_index].get('plot_type') not in ('rx_noise', 'rx_noise_binned_sources'):
             return
         self.auto_update_plot()
 
@@ -2395,7 +2445,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
                                              sort=current_freq_data.get('sort', 'ascending'),
-                                             return_fig=True)
+                                             return_fig=True,
+                                             **self._binned_source_kwargs(current_freq_data))
                     elif current_freq_data['test_type'] == 'speed_binned':
                         result = plot_function(current_freq_data['bist'], save_figs=False,
                                              output_dir=self.output_dir,
@@ -2408,7 +2459,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
                                              sort=current_freq_data.get('sort', 'ascending'),
-                                             return_fig=True)
+                                             return_fig=True,
+                                             **self._binned_source_kwargs(current_freq_data))
                     elif current_freq_data['test_type'] in ('rpm_binned', 'pitch_binned_deg', 'pitch_binned_pct'):
                         result = plot_function(current_freq_data['bist'], save_figs=False,
                                              output_dir=self.output_dir,
@@ -2421,7 +2473,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
                                              sort=current_freq_data.get('sort', 'ascending'),
-                                             return_fig=True)
+                                             return_fig=True,
+                                             **self._binned_source_kwargs(current_freq_data))
                     elif current_freq_data.get('plot_type') == 'rx_noise':
                         result = read_bist.plot_rx_noise(
                             current_freq_data['bist'],
@@ -3363,6 +3416,11 @@ class MainWindow(QtWidgets.QMainWindow):
                             else:
                                 figure = figure_result
                             self.all_figures.append(figure)
+                            base_name = str(freq_list[0]) if freq_list else 'Binned'
+                            self.freq_list = [base_name]
+                            if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_new):
+                                self.freq_list.append(f'{base_name} (BISTs)')
+                            self.total_charts = len(self.all_figures)
                             
                             # Display the plot in GUI
                             self.display_current_frequency()
@@ -3380,6 +3438,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.freq_list = freq_list
                         self.total_charts = len(freq_list)
                         self.current_chart_index = 0
+                        chart_names = []
                         
                         # Generate plots for each frequency
                         for f in range(len(freq_list)):
@@ -3432,10 +3491,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                 else:
                                     figure = figure_result
                                 self.all_figures.append(figure)
+                                chart_names.append(str(freq_list[f]))
+                                if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_new):
+                                    chart_names.append(f'{freq_list[f]} (BISTs)')
                                 
                             except Exception as e:
                                 self.update_log(f'Error generating binned plot for frequency {f}: {str(e)}')
                                 continue
+
+                        self.freq_list = chart_names
+                        self.total_charts = len(self.all_figures)
                         
                         # Display the first frequency plot in GUI
                         if self.frequency_data:
@@ -3506,6 +3571,11 @@ class MainWindow(QtWidgets.QMainWindow):
                             else:
                                 figure = figure_result
                             self.all_figures.append(figure)
+                            base_name = str(freq_list[0]) if freq_list else 'Binned'
+                            self.freq_list = [base_name]
+                            if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_2kt):
+                                self.freq_list.append(f'{base_name} (BISTs)')
+                            self.total_charts = len(self.all_figures)
                             
                             # Display the plot in GUI
                             self.display_current_frequency()
@@ -3523,6 +3593,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.freq_list = freq_list
                         self.total_charts = len(freq_list)
                         self.current_chart_index = 0
+                        chart_names = []
                         
                         # Generate plots for each frequency
                         for f in range(len(freq_list)):
@@ -3575,10 +3646,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                 else:
                                     figure = figure_result
                                 self.all_figures.append(figure)
+                                chart_names.append(str(freq_list[f]))
+                                if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_2kt):
+                                    chart_names.append(f'{freq_list[f]} (BISTs)')
                                 
                             except Exception as e:
                                 self.update_log(f'Error generating 2kt binned plot for frequency {f}: {str(e)}')
                                 continue
+
+                        self.freq_list = chart_names
+                        self.total_charts = len(self.all_figures)
                         
                         # Display the first frequency plot in GUI
                         if self.frequency_data:
@@ -3654,6 +3731,11 @@ class MainWindow(QtWidgets.QMainWindow):
                             else:
                                 figure = figure_result
                             self.all_figures.append(figure)
+                            base_name = str(freq_list[0]) if freq_list else 'Binned'
+                            self.freq_list = [base_name]
+                            if self._append_binned_source_heatmap(plot_data, discrete_plot_fn):
+                                self.freq_list.append(f'{base_name} (BISTs)')
+                            self.total_charts = len(self.all_figures)
                             
                             # Display the plot in GUI
                             self.display_current_frequency()
@@ -3672,6 +3754,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.freq_list = freq_list
                         self.total_charts = len(freq_list)
                         self.current_chart_index = 0
+                        chart_names = []
                         
                         # Generate plots for each frequency
                         for f in freq_list:
@@ -3730,10 +3813,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                 else:
                                     figure = figure_result
                                 self.all_figures.append(figure)
+                                chart_names.append(str(f))
+                                if self._append_binned_source_heatmap(plot_data, discrete_plot_fn):
+                                    chart_names.append(f'{f} (BISTs)')
                                 
                             except Exception as e:
                                 self.update_log(f'Error generating {discrete_label} binned plot for frequency {f}: {str(e)}')
                                 continue
+
+                        self.freq_list = chart_names
+                        self.total_charts = len(self.all_figures)
                         
                         # Display the first frequency plot in GUI
                         if self.frequency_data:
@@ -4419,7 +4508,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
                                                                sort=plot_data.get('sort', 'ascending'),
-                                                               return_fig=True)
+                                                               return_fig=True,
+                                                               **self._binned_source_kwargs(plot_data))
                     # Extract figure from tuple (binned functions return (fig, data_dict))
                     if isinstance(figure_result, tuple):
                         figure = figure_result[0]
@@ -4438,7 +4528,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
                                                                sort=plot_data.get('sort', 'ascending'),
-                                                               return_fig=True)
+                                                               return_fig=True,
+                                                               **self._binned_source_kwargs(plot_data))
                     # Extract figure from tuple (binned functions return (fig, data_dict))
                     if isinstance(figure_result, tuple):
                         figure = figure_result[0]
@@ -4457,7 +4548,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
                                                                sort=plot_data.get('sort', 'ascending'),
-                                                               return_fig=True)
+                                                               return_fig=True,
+                                                               **self._binned_source_kwargs(plot_data))
                     # Extract figure from tuple (binned functions return (fig, data_dict))
                     if isinstance(figure_result, tuple):
                         figure = figure_result[0]

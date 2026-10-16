@@ -21,6 +21,7 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib.ticker import FormatStrFormatter
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox, BboxTransform
 import datetime
 import re
@@ -3855,6 +3856,145 @@ def _apply_binned_xaxis_sort(ax, sort='ascending'):
         ax.invert_xaxis()
 
 
+def _new_binned_figure(source_heatmap=False, for_export=False):
+    """Single binned axes, or binned plot over a source heatmap."""
+    if not source_heatmap:
+        fig, ax = plt.subplots(figsize=(8, 9.0))
+        return fig, ax, None
+    fig = plt.figure(figsize=(8, 11))  # same export size as the RX noise heatmap
+    if for_export:
+        # Use the page: smaller gap between panels and less outer margin.
+        gs = gridspec.GridSpec(
+            2, 1, height_ratios=[1.15, 1.45], hspace=0.18,
+            top=0.93, bottom=0.05, left=0.08, right=0.90)
+    else:
+        gs = gridspec.GridSpec(
+            2, 1, height_ratios=[1.15, 1.45], hspace=0.32,
+            top=0.90, bottom=0.06, left=0.12, right=0.86)
+    return fig, fig.add_subplot(gs[0]), fig.add_subplot(gs[1])
+
+
+def _noise_color_limits(noise_lims):
+    vmin, vmax = 30.0, 70.0
+    if len(noise_lims) == 2:
+        try:
+            vmin = float(noise_lims[0])
+            vmax = float(noise_lims[1])
+        except (TypeError, ValueError):
+            vmin, vmax = 30.0, 70.0
+    return vmin, vmax
+
+
+def _rx_noise_colormap(name, vmin, vmax, redblue_center):
+    """Colormap used by RX noise heatmaps, including out-of-range colors."""
+    cmap = (name or 'jet').lower().strip()
+    if cmap == 'inferno':
+        colormap = _inferno_from_step40_cmap().copy()
+    elif cmap == 'hot':
+        colormap = _hot_from_step24_cmap().copy()
+    elif cmap == 'redblue':
+        colormap = _redblue_cmap(vmin, vmax, redblue_center).copy()
+    elif cmap == 'coolwarm':
+        colormap = _coolwarm_center_cmap(vmin, vmax, redblue_center).copy()
+    elif cmap == 'reversed managua':
+        colormap = _reversed_managua_center_cmap(vmin, vmax, redblue_center).copy()
+    else:
+        colormap = plt.get_cmap(cmap).copy()
+    colormap.set_under('black')
+    colormap.set_over('magenta')
+    return colormap
+
+
+def _order_bin_groups(groups, params, sort='ascending'):
+    """Left-to-right bin order, matching the binned plot sort direction."""
+    ordered = []
+    for center, idxs in groups:
+        idxs = sorted(idxs, key=lambda i: (params[i], i))
+        ordered.append((center, idxs))
+    if (sort or 'ascending').lower() == 'descending':
+        ordered.reverse()
+        ordered = [(center, list(reversed(idxs))) for center, idxs in ordered]
+    return ordered
+
+
+def _speed_bin_groups(params, bin_edges, bin_centers, displayed_centers, sort='ascending'):
+    """Tests that fall in each bin drawn on the binned plot."""
+    groups = []
+    for center in displayed_centers:
+        idxs = []
+        for i, param in enumerate(params):
+            bin_idx = int(np.digitize(param, bin_edges) - 1)
+            if 0 <= bin_idx < len(bin_centers) and np.isclose(bin_centers[bin_idx], center, rtol=0, atol=1e-6):
+                idxs.append(i)
+        if idxs:
+            groups.append((center, idxs))
+    return _order_bin_groups(groups, params, sort)
+
+
+def _value_bin_groups(params, displayed_centers, sort='ascending'):
+    """Tests that share each discrete bin value drawn on the binned plot."""
+    groups = []
+    for center in displayed_centers:
+        idxs = [i for i, param in enumerate(params) if np.isclose(param, center, rtol=0, atol=1e-6)]
+        if idxs:
+            groups.append((center, idxs))
+    return _order_bin_groups(groups, params, sort)
+
+
+def _draw_binned_source_heatmap(fig, ax, element_columns, groups, param_unit, noise_lims,
+                                cmap='jet', redblue_center=55):
+    """Heatmap of the BISTs in each plotted bin, with one box per bin."""
+    if not groups or not element_columns:
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, 'No BISTs in the plotted bins', ha='center', va='center',
+                transform=ax.transAxes, fontsize=12)
+        return
+
+    columns = []
+    spans = []
+    col = 0
+    for center, idxs in groups:
+        for i in idxs:
+            columns.append(np.ravel(element_columns[i]).astype(float))
+        spans.append((col, col + len(idxs), center))
+        col += len(idxs)
+
+    heat = np.column_stack(columns)
+    vmin, vmax = _noise_color_limits(noise_lims)
+    colormap = _rx_noise_colormap(cmap, vmin, vmax, redblue_center)
+    im = ax.imshow(heat, cmap=colormap, aspect='auto', vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax.invert_yaxis()
+
+    n_rows, n_cols = heat.shape
+    label_pad = max(0.8, n_rows * 0.04)
+    ax.set_xlim(-0.5, n_cols - 0.5)
+    ax.set_ylim(-0.5, n_rows - 0.5 + label_pad)
+    for start, end, center in spans:
+        width = end - start
+        ax.add_patch(Rectangle((start - 0.5, -0.5), width, n_rows, fill=False,
+                               edgecolor='white', linewidth=2.2, zorder=5))
+        ax.add_patch(Rectangle((start - 0.5, -0.5), width, n_rows, fill=False,
+                               edgecolor='black', linewidth=0.9, zorder=6))
+        ax.text(start + (width - 1) / 2.0, n_rows - 0.5 + 0.05, f'{center:g}',
+                ha='center', va='bottom', fontsize=8, fontweight='bold', clip_on=True, zorder=7)
+
+    ax.set_xticks([])
+    ax.set_xlabel(f'BISTs grouped by {param_unit}', fontsize=12)
+    ax.set_ylabel('RX Module (index starts at 0)', fontsize=12)
+
+    data_min = np.nanmin(heat)
+    data_max = np.nanmax(heat)
+    extend = 'neither'
+    if data_min < vmin and data_max > vmax:
+        extend = 'both'
+    elif data_min < vmin:
+        extend = 'min'
+    elif data_max > vmax:
+        extend = 'max'
+    cbar = fig.colorbar(im, ax=ax, orientation='vertical', extend=extend, fraction=0.046, pad=0.03)
+    cbar.set_label(r'RX Noise (dB re 1 $\mu$Pa/$\sqrt{Hz}$)', fontsize=10)
+
+
 def _binned_n_label_y(mean, yerr, means_for_range, y_max_lim=None):
     """Y coordinate for n= count labels, placed above the error bar cap."""
     data_range = max(means_for_range) - min(means_for_range) if len(means_for_range) else 0.0
@@ -3868,7 +4008,8 @@ def _binned_n_label_y(mean, yerr, means_for_range, y_max_lim=None):
 def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                             param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[],
                             binned_range_lims=[], error_bar_type='Standard Deviation',
-                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False):
+                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False,
+                            source_heatmap=False, cmap='jet', redblue_center=55):
     """
     Plot RX Noise binned by speed with mean noise levels.
     
@@ -3920,6 +4061,7 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     # Collect all noise data and corresponding parameters
     all_noise_data = []
     all_params = []
+    all_elements = []
     
     # Create a flat list of parameters for each test
     test_idx = 0
@@ -3945,6 +4087,7 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                 
                 all_noise_data.append(noise_mean)
                 all_params.append(param_val)
+                all_elements.append(np.ravel(rxn_local).astype(float))
                 test_idx += 1
         except Exception as e:
             print(f'Error processing file {i}, test {j}: {e}')
@@ -4070,8 +4213,9 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             print(f'Warning: Invalid param_lims values: {param_lims}, using all bins')
     
     # Create the plot
-    plt.close('all')
-    fig, ax = plt.subplots(figsize=(8, 9.0))
+    if not source_heatmap:
+        plt.close('all')
+    fig, ax, ax_hm = _new_binned_figure(source_heatmap, for_export=save_figs)
     
     # First layer: Plot individual data points based on user selection
     scatter_x = []
@@ -4224,13 +4368,16 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     # Add legend in upper left corner
     ax.legend(loc='upper left')
     _apply_binned_xaxis_sort(ax, sort)
-    
-    # Three-line title; top margin leaves room for the title and gives the axes the rest
-    plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
-    
-    # Apply layout for PNG exports to match GUI appearance
-    if save_figs:
-        plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
+
+    if ax_hm is not None:
+        groups = _speed_bin_groups(all_params, bin_edges, bin_centers, binned_centers, sort)
+        _draw_binned_source_heatmap(fig, ax_hm, all_elements, groups, param_unit, binned_range_lims,
+                                    cmap=cmap, redblue_center=redblue_center)
+    else:
+        # Three-line title; top margin leaves room for the title and gives the axes the rest
+        plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
+        if save_figs:
+            plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
     
     # Save the figure
     if save_figs:
@@ -4249,7 +4396,8 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         error_suffix = "StdDev" if error_bar_type == "Standard Deviation" else "StdErr"
         # Add _bin suffix if individual measurements are binned or both
         bin_suffix = "_bin" if individual_type in ["Binned (Cyan)", "Both (Binned + Non-binned)"] else ""
-        fig_name = f'RX_noise_binned_1kt_vs_{test_type}_{error_suffix}{bin_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png'
+        source_suffix = "_bists" if source_heatmap else ""
+        fig_name = f'RX_noise_binned_1kt_vs_{test_type}_{error_suffix}{bin_suffix}{source_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png'
         print('Saving', fig_name)
         fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
     
@@ -4272,7 +4420,8 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
 def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                             param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[],
                             binned_range_lims=[], error_bar_type='Standard Deviation',
-                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False):
+                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False,
+                            source_heatmap=False, cmap='jet', redblue_center=55):
     """
     Plot RX Noise binned by speed with 2-knot intervals.
     
@@ -4324,6 +4473,7 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     # Collect all noise data and corresponding parameters
     all_noise_data = []
     all_params = []
+    all_elements = []
     
     # Create a flat list of parameters for each test
     test_idx = 0
@@ -4349,6 +4499,7 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                 
                 all_noise_data.append(noise_mean)
                 all_params.append(param_val)
+                all_elements.append(np.ravel(rxn_local).astype(float))
                 test_idx += 1
         except Exception as e:
             print(f'Error processing file {i}, test {j}: {e}')
@@ -4461,7 +4612,7 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             print(f'  Bin {bin_center}: {binned_counts[bin_center]} samples, mean={mean_dB:.2f} dB, std={std_dB:.2f} dB')
     
     # Create the plot
-    fig, ax = plt.subplots(figsize=(8, 9.0))
+    fig, ax, ax_hm = _new_binned_figure(source_heatmap, for_export=save_figs)
     
     # Extract data for plotting
     centers = list(binned_data.keys())
@@ -4644,13 +4795,16 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                 print(f'Warning: Invalid binned_range_lims values: {binned_range_lims}, using autoscale')
         
         _apply_binned_xaxis_sort(ax, sort)
-        
-        # Three-line title; top margin leaves room for the title and gives the axes the rest
-        plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
-        
-        # Apply layout for PNG exports to match GUI appearance
-        if save_figs:
-            plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
+
+        if ax_hm is not None:
+            groups = _speed_bin_groups(all_params, bin_edges, bin_centers, centers, sort)
+            _draw_binned_source_heatmap(fig, ax_hm, all_elements, groups, param_unit, binned_range_lims,
+                                        cmap=cmap, redblue_center=redblue_center)
+        else:
+            # Three-line title; top margin leaves room for the title and gives the axes the rest
+            plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
+            if save_figs:
+                plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
         
         # Save the figure
         if save_figs:
@@ -4669,7 +4823,8 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             error_suffix = "StdDev" if error_bar_type == "Standard Deviation" else "StdErr"
             # Add _bin suffix if individual measurements are binned
             bin_suffix = "_bin" if individual_type == "Binned (Cyan)" else ""
-            fig_name = f'RX_noise_binned_2kt_vs_{test_type}_{error_suffix}{bin_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png'
+            source_suffix = "_bists" if source_heatmap else ""
+            fig_name = f'RX_noise_binned_2kt_vs_{test_type}_{error_suffix}{bin_suffix}{source_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png'
             print('Saving', fig_name)
             fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
         
@@ -4848,7 +5003,8 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
                                    param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
                                    binned_range_lims=[], error_bar_type='Standard Deviation',
                                    individual_type='Non-binned (Light Grey)', sort='ascending',
-                                   return_fig=False, x_padding=50.0):
+                                   return_fig=False, x_padding=50.0, source_heatmap=False,
+                                   cmap='jet', redblue_center=55):
     """
     Plot RX Noise with one bin per distinct parameter value (RPM, pitch, etc.).
 
@@ -4899,6 +5055,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     # Collect all noise data and corresponding parameters
     all_noise_data = []
     all_params = []
+    all_elements = []
     
     # Create a flat list of parameters for each test
     test_idx = 0
@@ -4924,6 +5081,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
                 
                 all_noise_data.append(noise_mean)
                 all_params.append(param_val)
+                all_elements.append(np.ravel(rxn_local).astype(float))
                 test_idx += 1
         except Exception as e:
             print(f'Error processing file {i}, test {j}: {e}')
@@ -4978,7 +5136,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
                   f'mean={mean_dB:.2f} dB, std={std_dB:.2f} dB')
     
     # Create the plot
-    fig, ax = plt.subplots(figsize=(8, 9.0))
+    fig, ax, ax_hm = _new_binned_figure(source_heatmap, for_export=save_figs)
     
     # Extract data for plotting
     centers = list(binned_data.keys())
@@ -5171,24 +5329,30 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     ax.legend(loc='upper left', fontsize=10)
     ax.grid(True, alpha=0.3)
     _apply_binned_xaxis_sort(ax, sort)
-    
-    # Three-line title; top margin leaves room for the title and gives the axes the rest
-    plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
-    
+
+    if ax_hm is not None:
+        groups = _value_bin_groups(all_params, centers, sort)
+        _draw_binned_source_heatmap(fig, ax_hm, all_elements, groups, param_unit, binned_range_lims,
+                                    cmap=cmap, redblue_center=redblue_center)
+    else:
+        # Three-line title; top margin leaves room for the title and gives the axes the rest
+        plt.subplots_adjust(top=0.90, left=0.1, right=0.95, bottom=0.1)
+        if save_figs:
+            plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
+
     if save_figs:
-        plt.subplots_adjust(top=0.92, left=0.1, right=0.95, bottom=0.1)
-        # Save the figure
         date_str = rxn.get('date', ['Unknown'])[0] if rxn.get('date') else 'Unknown'
         clean_date_str = date_str.replace("/", "").replace("-", "")
-        
+
         # Create filename with error bar type
         error_suffix = "_std" if error_bar_type == 'Standard Deviation' else "_se"
         bin_suffix = "_bin" if individual_type in ["Binned (Cyan)", "Both (Binned + Non-binned)"] else ""
-        
+
         # Clean frequency display for filename (remove brackets and other unwanted characters)
         clean_freq_display = freq_display.replace(" ", "_").replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("'", "")
         param_token = param_unit.replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'pct')
-        fig_name = (f'RX_noise_binned_{param_token}_vs_RXnoise_{error_suffix}{bin_suffix}_'
+        source_suffix = "_bists" if source_heatmap else ""
+        fig_name = (f'RX_noise_binned_{param_token}_vs_RXnoise_{error_suffix}{bin_suffix}{source_suffix}_'
                     f'EM{model}_SN_{sn}_{clean_date_str}_{clean_freq_display}.png')
         print('Saving', fig_name)
         fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
@@ -5215,23 +5379,25 @@ def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                              param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
                              binned_range_lims=[], error_bar_type='Standard Deviation',
                              individual_type='Non-binned (Light Grey)', sort='ascending',
-                             return_fig=False):
+                             return_fig=False, source_heatmap=False, cmap='jet', redblue_center=55):
     """Plot RX Noise binned by distinct RPM values."""
     return _plot_rx_noise_binned_discrete(
         rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
         param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
         binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
-        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=50.0)
+        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=50.0,
+        source_heatmap=source_heatmap, cmap=cmap, redblue_center=redblue_center)
 
 
 def plot_rx_noise_binned_pitch(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                                param_unit='Pitch (deg)', param_adjust=0.0, param=[], param_lims=[],
                                binned_range_lims=[], error_bar_type='Standard Deviation',
                                individual_type='Non-binned (Light Grey)', sort='ascending',
-                               return_fig=False):
+                               return_fig=False, source_heatmap=False, cmap='jet', redblue_center=55):
     """Plot RX Noise binned by distinct pitch values (deg or %)."""
     return _plot_rx_noise_binned_discrete(
         rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
         param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
         binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
-        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=None)
+        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=None,
+        source_heatmap=source_heatmap, cmap=cmap, redblue_center=redblue_center)
