@@ -557,7 +557,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rmv_file_btn = PushButton('Remove Selected', btnw, btnh, 'rmv_files', 'Remove selected files')
         self.clr_file_btn = PushButton('Remove All Files', btnw, btnh, 'clr_file_btn', 'Remove all files')
         self.show_path_chk = CheckBox('Show file paths', False, 'show_paths_chk', 'Show paths in file list')
-        self.export_plots_btn = PushButton('Export Plot', btnw, btnh, 'export_plots_btn',
+        self.export_plots_btn = PushButton('Export Plots', btnw, btnh, 'export_plots_btn',
                                            'Save plot PNG files and out-of-spec reports from the last plot run')
         self.export_plots_btn.setEnabled(False)
         self.import_analysis_btn = PushButton('Import Analysis', btnw, btnh, 'import_analysis_btn',
@@ -570,6 +570,10 @@ class MainWindow(QtWidgets.QMainWindow):
             'QPushButton { color: #FF8C00; font-weight: bold; }'
         )
         self._export_pending = False
+        self._startup_action_pending = True
+        self.add_file_btn.setStyleSheet(self._export_btn_style_pending)
+        self.get_indir_btn.setStyleSheet(self._export_btn_style_pending)
+        self.import_analysis_btn.setStyleSheet(self._export_btn_style_pending)
         self.last_plotted_bist = None
         self.last_bist_test_type = None
         self.last_plotted_files = []
@@ -1337,6 +1341,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     new_item.setData(1, fnames_new[f].replace('\\','/'))  # set full file path as data, role 1
                     new_item.setText((path + '/') * int(self.show_path_chk.isChecked()) + fname)  # set text, show path
                     self.file_list.addItem(new_item)
+                    self._clear_startup_action_highlight()
                     # self.update_log('Added ' + fname)  # fnames_new[f].rsplit('/',1)[-1])
                     bist_types_found = [self.bist_list[idx_found] for idx_found in bist_type]
                     self.update_log('Added ' + fnames_new[f].split('/')[-1] +
@@ -1373,6 +1378,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.input_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Add directory', last_input_dir)
             
             if self.input_dir:  # Only proceed if user didn't cancel
+                self._clear_startup_action_highlight()
                 # Save the selected directory to session config
                 update_bist_last_directory("last_input_directory", self.input_dir)
                 
@@ -1388,20 +1394,31 @@ class MainWindow(QtWidgets.QMainWindow):
             self.input_dir = ''
             pass
 
+    def _clear_startup_action_highlight(self):
+        """Return the startup buttons to normal text after files, a directory, or an analysis are loaded."""
+        if not getattr(self, '_startup_action_pending', False):
+            return
+        self._startup_action_pending = False
+        self.add_file_btn.setStyleSheet(self._export_btn_style_default)
+        self.get_indir_btn.setStyleSheet(self._export_btn_style_default)
+        self.import_analysis_btn.setStyleSheet(self._export_btn_style_default)
+
     def _clear_export_button_highlight(self):
         """Reset export button text color after export or when input data changes."""
         self._export_pending = False
         self.export_plots_btn.setStyleSheet(self._export_btn_style_default)
+        self.export_analysis_btn.setStyleSheet(self._export_btn_style_default)
 
     def _set_export_button_pending(self):
-        """Highlight export button in orange until export or new data is loaded."""
+        """Highlight export buttons in orange until export or new data is loaded."""
         self._export_pending = True
         self.export_plots_btn.setStyleSheet(self._export_btn_style_pending)
+        self.export_analysis_btn.setStyleSheet(self._export_btn_style_pending)
 
     def _update_export_button(self, mark_pending=False):
         """Enable export and set label based on number of plots from the last run."""
         n = len(self.all_figures) if hasattr(self, 'all_figures') and self.all_figures else 0
-        self.export_plots_btn.setText('Export Plots' if n > 1 else 'Export Plot')
+        self.export_plots_btn.setText('Export Plots')
         self.export_plots_btn.setEnabled(n > 0)
         self.export_analysis_btn.setEnabled(n > 0)
         if mark_pending and n > 0:
@@ -1668,6 +1685,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not isinstance(record, dict) or not record.get('files'):
             QtWidgets.QMessageBox.warning(self, 'Import failed', 'This JSON file does not contain an analysis file list.')
             return
+        self._clear_startup_action_highlight()
         files = [str(p).replace('\\', '/') for p in record['files']]
         missing = [p for p in files if not os.path.isfile(p)]
         if missing:

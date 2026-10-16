@@ -1861,6 +1861,13 @@ def write_tx_out_of_spec_report(z, output_dir=os.getcwd()):
 
             tx_data = np.asanyarray(z['tx'][i], dtype=float)
             out_of_spec = np.where((tx_data < zmin) | (tx_data > zmax))
+            bad_rows = []
+            for tx_channel, tx_slot in zip(out_of_spec[0], out_of_spec[1]):
+                z_val = tx_data[tx_channel, tx_slot]
+                if np.isnan(z_val):
+                    continue
+                # TX slots in plots are 1-based; channels are 0-based
+                bad_rows.append((int(tx_channel), int(tx_slot) + 1, float(z_val)))
 
             report_name = 'TX_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_from_text_file_' + fname_str + '.txt'
             report_path = os.path.join(output_dir, report_name)
@@ -1871,19 +1878,16 @@ def write_tx_out_of_spec_report(z, output_dir=os.getcwd()):
                 f.write('File: ' + fname_str + '.txt\n')
                 f.write('Model: EM' + str(z['model'][i]) + '\n')
                 f.write('Serial Number: ' + str(z['sn'][i]) + '\n')
-                f.write('Spec Range (ohms): ' + str(zmin) + ' to ' + str(zmax) + '\n\n')
+                f.write('Spec Range (ohms): ' + str(zmin) + ' to ' + str(zmax) + '\n')
+                f.write(f'Out-of-spec elements in this test: {len(bad_rows)}\n\n')
                 f.write('TX Channel, TX Slot, Impedance (ohms)\n')
                 f.write('-------------------------------------\n')
 
-                if len(out_of_spec[0]) == 0:
+                if not bad_rows:
                     f.write('No out-of-spec TX elements found.\n')
                 else:
-                    for tx_channel, tx_slot in zip(out_of_spec[0], out_of_spec[1]):
-                        z_val = tx_data[tx_channel, tx_slot]
-                        if np.isnan(z_val):
-                            continue
-                        # TX slots in plots are 1-based; channels are 0-based
-                        f.write(f'{int(tx_channel)}, {int(tx_slot) + 1}, {float(z_val):.2f}\n')
+                    for tx_channel, tx_slot, z_val in bad_rows:
+                        f.write(f'{tx_channel}, {tx_slot}, {z_val:.2f}\n')
 
             report_files.append(report_name)
 
@@ -1904,29 +1908,28 @@ def write_rx_array_out_of_spec_report(z, output_dir=os.getcwd()):
             report_name = 'RX_ARRAY_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_from_text_file_' + fname_str + '.txt'
             report_path = os.path.join(output_dir, report_name)
 
-            rows = []
+            sections = []
             tests = sorted(z['rx_array'][i].keys())
             for t in tests:
                 n_freq = len(z['freq_range'][i][t])
-                for f in range(n_freq):
+                for f_idx in range(n_freq):
                     # Default transducer limits if parsing failed.
                     rx_xdcr_min, rx_xdcr_max = 250, 1200
                     try:
-                        rx_xdcr_min, rx_xdcr_max = _pair_limits(z['rx_array_limits'][i][t][f])
+                        rx_xdcr_min, rx_xdcr_max = _pair_limits(z['rx_array_limits'][i][t][f_idx])
                     except Exception:
                         pass
 
-                    rx_array_data = np.asanyarray(z['rx_array'][i][t][f], dtype=float)
+                    rx_array_data = np.asanyarray(z['rx_array'][i][t][f_idx], dtype=float)
                     out_of_spec = np.where((rx_array_data < rx_xdcr_min) | (rx_array_data > rx_xdcr_max))
-                    if len(out_of_spec[0]) == 0:
-                        continue
-
-                    freq_label = str(z['freq_range'][i][t][f]).replace('.0', '')
+                    freq_label = str(z['freq_range'][i][t][f_idx]).replace('.0', '')
+                    rows = []
                     for rx_board, rx_channel in zip(out_of_spec[0], out_of_spec[1]):
                         z_val = rx_array_data[rx_board, rx_channel]
                         if np.isnan(z_val):
                             continue
-                        rows.append((t, freq_label, int(rx_board), int(rx_channel), float(z_val), rx_xdcr_min, rx_xdcr_max))
+                        rows.append((int(rx_board), int(rx_channel), float(z_val), rx_xdcr_min, rx_xdcr_max))
+                    sections.append((t, freq_label, rows))
 
             with open(report_path, 'w', encoding='utf-8') as f:
                 f.write('RX Array Out-of-Spec Report\n')
@@ -1934,14 +1937,22 @@ def write_rx_array_out_of_spec_report(z, output_dir=os.getcwd()):
                 f.write('File: ' + fname_str + '.txt\n')
                 f.write('Model: EM' + str(z['model'][i]) + '\n')
                 f.write('Serial Number: ' + str(z['sn'][i]) + '\n\n')
+                f.write('Out-of-spec element counts (per test):\n')
+                if not sections:
+                    f.write('No RX array tests found.\n')
+                else:
+                    for t, freq_label, rows in sections:
+                        f.write(f'Test {t}, {freq_label} kHz: {len(rows)}\n')
+                f.write('\n')
                 f.write('Test, Frequency (kHz), RX Board, RX Channel, Impedance (ohms), Spec Min, Spec Max\n')
                 f.write('-------------------------------------------------------------------------------\n')
 
-                if not rows:
+                if not any(rows for _, _, rows in sections):
                     f.write('No out-of-spec RX array elements found.\n')
                 else:
-                    for t, freq_label, rx_board, rx_channel, z_val, rx_xdcr_min, rx_xdcr_max in rows:
-                        f.write(f'{t}, {freq_label}, {rx_board}, {rx_channel}, {z_val:.2f}, {rx_xdcr_min}, {rx_xdcr_max}\n')
+                    for t, freq_label, rows in sections:
+                        for rx_board, rx_channel, z_val, rx_xdcr_min, rx_xdcr_max in rows:
+                            f.write(f'{t}, {freq_label}, {rx_board}, {rx_channel}, {z_val:.2f}, {rx_xdcr_min}, {rx_xdcr_max}\n')
 
             report_files.append(report_name)
 
