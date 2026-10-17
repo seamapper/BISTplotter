@@ -1010,6 +1010,25 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
         return None  # No figures were generated
 
 
+def _raise_ylabel_inside_figure(fig, ax):
+    """Move a vertical Y label up if its lower end falls outside the figure."""
+    label = ax.yaxis.label
+    if not label.get_text():
+        return
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        bbox = label.get_window_extent(renderer=renderer)
+        ax_bbox = ax.get_window_extent(renderer=renderer)
+    except Exception:
+        return
+    pad = 6
+    if bbox.y0 >= pad or ax_bbox.height <= 1:
+        return
+    x, y = label.get_position()
+    label.set_position((x, y + (pad - bbox.y0) / ax_bbox.height))
+
+
 def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_mode=False):
     """
     RX Channels plot styled like TX plot_style=2:
@@ -1079,10 +1098,10 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
                 plt.rcParams['xtick.bottom'] = plt.rcParams['xtick.labelbottom'] = False
                 plt.rcParams['xtick.top'] = plt.rcParams['xtick.labeltop'] = True
 
-                subplot_height_ratio = 1.5
                 fig = plt.figure()
                 fig.set_size_inches(11, 16)
-                gs = gridspec.GridSpec(2, 1, height_ratios=[1, subplot_height_ratio], hspace=0.15)
+                # Line plot gets more of the figure than the square-cell heatmap.
+                gs = gridspec.GridSpec(2, 1, height_ratios=[1.8, 1], hspace=0.12)
 
                 # top plot: line plot for each board across all channels
                 ax1 = plt.subplot(gs[0])
@@ -1162,15 +1181,16 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
 
                 fig._bist_rx_channel_hover = (ax2, im, rx_data)
 
-                # Extra pad below heatmap: RX boards are fewer rows than TX slots
-                cbar = fig.colorbar(im, orientation='horizontal', ax=ax2, fraction=0.05, pad=0.14,
+                # Room below the heatmap for the colorbar without pushing the Y label off the page
+                cbar = fig.colorbar(im, orientation='horizontal', ax=ax2, fraction=0.046, pad=0.08,
                                     extend=rx_extend)
                 cbar.set_label(value_label, fontsize=cbar_fontsize)
 
                 fig.suptitle(title_str, fontsize=suptitle_fontsize)
                 fig.tight_layout()
-                # Four-line RX title needs more headroom than TX style 2 (three lines)
-                fig.subplots_adjust(top=0.81, bottom=0.08)
+                # Four-line title above; extra bottom margin so the heatmap Y label stays on the page
+                fig.subplots_adjust(top=0.81, bottom=0.14)
+                _raise_ylabel_inside_figure(fig, ax2)
 
                 if save_figs:
                     # Mirror plot_rx_z naming convention as closely as possible
@@ -2044,8 +2064,9 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 ax.set_ylabel('TX Channel (index starts at 0)', fontsize=label_fontsize)
 
                 # set the super title
-                title_str = 'TX Channels BIST\n' + em_model_id_for_title(z, file_index=i) + '\n' + fname_str
-                t1 = fig.suptitle(title_str, fontsize=suptitle_fontsize)
+                title_str = 'TX Channels BIST\n' + tx_channels_id_line(z, file_index=i) + '\n' + \
+                            tx_channels_detail_line(fname_str, z, file_index=i)
+                t1 = fig.suptitle(title_str, fontsize=16 if not gui_mode else suptitle_fontsize)
                 fig.set_size_inches(10, 12)
                 if gui_mode:
                     _center_axes_block_in_figure(fig, top_margin=0.88)
@@ -2137,7 +2158,8 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
 
 
                 # set the super title
-                title_str = 'TX Channels BIST\n' + em_model_id_for_title(z, file_index=i) + '\n' + fname_str
+                title_str = 'TX Channels BIST\n' + tx_channels_id_line(z, file_index=i) + '\n' + \
+                            tx_channels_detail_line(fname_str, z, file_index=i)
                 t1 = fig.suptitle(title_str, fontsize=suptitle_fontsize)
                 fig.tight_layout()
                 fig.subplots_adjust(top=0.87)
@@ -2350,8 +2372,9 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
         years_str = 'Years: ' + str(yrmin) + '-' + str(yrmax)
 
     # set the super title
-    title_str = 'TX Channels BIST\n' + em_model_id_for_title(z) + '\n' + \
-                years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')\n' + \
+    years_detail = years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')'
+    title_str = 'TX Channels BIST\n' + tx_channels_id_line(z) + '\n' + \
+                tx_channels_detail_line(years_detail, z) + '\n' + \
                 'Frequency: ' + freq + ' kHz'
                 # 'Frequency: '+z['freq_range'][i][f]+' kHz'
     t1 = fig.suptitle(title_str, fontsize=title_fontsize)
@@ -3391,9 +3414,8 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
         freq_title = 'Unknown'
 
     title_str = ('RX Noise vs. ' + test_type.capitalize() + '\n' +
-                 ship_title_prefix(rxn.get('ship_name')) + em_model_id_for_title(rxn) +
-                 description_title_suffix(rxn.get('cruise_name')) + '\n' +
-                 'Freq: ' + freq_title + ' - ' + binned_date_title(date_str))
+                 system_id_title_line(rxn) + '\n' +
+                 'Freq: ' + freq_title + plot_title_date_suffix(rxn, date_str))
     try:
         fig.suptitle(title_str, fontsize=16)
     except Exception as e:
@@ -3508,6 +3530,7 @@ def format_title_id_clause(sn=None, filenames=None, user_sn=None, user_entered=F
         u = str(user_sn).strip() if user_sn is not None else ''
         if u:
             return f' (S/N {u})'
+        return ''
     if is_real_detected_sn(sn):
         return f' (S/N {str(sn).strip()})'
     bases = _title_filename_basenames(filenames)
@@ -3540,6 +3563,128 @@ def description_title_suffix(description):
     return f' - {text}' if text else ''
 
 
+def _title_hidden(z, field):
+    """True when a system-info field must be left off plot titles."""
+    return field in set((z or {}).get('title_hide') or [])
+
+
+def system_id_title_line(z, file_index=None):
+    """Ship, model/serial, and description joined for a title, skipping blank pieces."""
+    parts = []
+    ship = defined_title_text(z.get('ship_name'))
+    ident = em_model_id_for_title(z, file_index=file_index)
+    description = defined_title_text(z.get('cruise_name'))
+    if ship:
+        parts.append(ship)
+    if ident:
+        parts.append(ident)
+    if description:
+        parts.append(description)
+    return ' - '.join(parts)
+
+
+def tx_channels_id_line(z, file_index=None):
+    """Second TX title line: [Ship - ]EM### (S/N ...)[ - description]."""
+    return system_id_title_line(z, file_index=file_index)
+
+
+def tx_frequency_text(z, file_index=None):
+    """Frequency numbers for a TX title, or '' when none can be read."""
+    freqs = z.get('frequency') or []
+    if not isinstance(freqs, list):
+        freqs = [freqs]
+    if file_index is None:
+        indexes = range(len(freqs))
+    elif 0 <= file_index < len(freqs):
+        indexes = [file_index]
+    else:
+        indexes = []
+    found = []
+    for idx in indexes:
+        try:
+            arr = np.asarray(freqs[idx], dtype=float).ravel()
+        except (TypeError, ValueError):
+            continue
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            continue
+        value = float(arr[0]) if np.isfinite(arr[0]) else float(np.mean(finite))
+        text = f'{value:g}'
+        if text not in found:
+            found.append(text)
+    return ', '.join(found)
+
+
+def tx_bist_filename(z, file_index):
+    """Basename of the BIST file for one TX plot, or '' when it is not available."""
+    if file_index is None:
+        return ''
+    names = z.get('filename') or []
+    if not isinstance(names, list) or not (0 <= file_index < len(names)):
+        return ''
+    return os.path.basename(str(names[file_index]).replace('\\', '/'))
+
+
+def format_plot_date(value):
+    """YYYY-MM-DD for a title, or '' when the date is missing or a placeholder."""
+    text = defined_date_text(value)
+    if not text:
+        return ''
+    digits = text.replace('/', '').replace('-', '')
+    if len(digits) >= 8 and digits[:8].isdigit():
+        return f'{digits[0:4]}-{digits[4:6]}-{digits[6:8]}'
+    return text
+
+
+def tx_plot_date_text(z, file_index):
+    """YYYY-MM-DD for one TX file, or '' when the date should not be shown."""
+    if _title_hidden(z, 'date'):
+        return ''
+    if z.get('date_user_entered'):
+        return format_plot_date(z.get('date_user_value'))
+    if file_index is None:
+        return ''
+    dates = z.get('date') or []
+    if not isinstance(dates, list) or not (0 <= file_index < len(dates)):
+        return ''
+    return format_plot_date(dates[file_index])
+
+
+def plot_title_date_suffix(z, raw_date=None):
+    """' - YYYY-MM-DD' for a title, or '' when the date should be omitted."""
+    if z is not None and _title_hidden(z, 'date'):
+        return ''
+    if z is not None and z.get('date_user_entered'):
+        text = format_plot_date(z.get('date_user_value'))
+    else:
+        text = format_plot_date(raw_date)
+    return f' - {text}' if text else ''
+
+
+def tx_channels_detail_line(detail, z, file_index=None):
+    """Third TX title line: [Freq: N kHz - ][date - ]filename.
+
+    Frequency and date are omitted when they cannot be determined.
+    """
+    freq = tx_frequency_text(z, file_index=file_index)
+    file_name = tx_bist_filename(z, file_index)
+    if file_index is not None:
+        parts = []
+        if freq:
+            parts.append(f'Freq: {freq} kHz')
+        date_text = tx_plot_date_text(z, file_index)
+        if date_text:
+            parts.append(date_text)
+        if file_name:
+            parts.append(file_name)
+        if parts:
+            return ' - '.join(parts)
+        return detail
+    if freq:
+        return f'Freq: {freq} kHz - {detail}'
+    return detail
+
+
 def binned_date_title(date):
     """Date text for plot titles. A defined date is shown without a 'Date:' label."""
     text = defined_date_text(date)
@@ -3558,7 +3703,7 @@ def defined_date_text(date):
     if isinstance(date, (list, tuple)):
         date = date[0] if date else ''
     text = '' if date is None else str(date).strip()
-    if text in ('', '?', 'None', 'Unknown', 'YYYY-MM-DD'):
+    if text.lower() in ('', '?', 'none', 'unknown', 'yyyy-mm-dd', 'yyyy/mm/dd'):
         return ''
     return text
 
@@ -3577,21 +3722,35 @@ def em_model_id_for_title(z, file_index=None):
 
     file_index: use that file only (per-file plots). None = all files (history/multi).
     """
-    user_entered = bool(z.get('sn_user_entered', False))
+    hide_model = _title_hidden(z, 'model')
+    hide_sn = _title_hidden(z, 'sn')
+    user_entered = bool(z.get('sn_user_entered', False)) and not hide_sn
     user_sn = z.get('sn_user_value', None)
     sns = z.get('sn', []) or []
     fnames = z.get('filename', []) or []
     models = z.get('model', []) or []
 
-    if user_sn is None and sns:
+    if user_sn is None and sns and not user_entered:
         user_sn = sns[0] if isinstance(sns, list) else sns
 
-    if file_index is not None:
+    if z.get('model_user_entered') and not hide_model:
+        model = z.get('model_user_value', '')
+    elif hide_model:
+        model = None
+    elif file_index is not None:
         model = models[file_index] if file_index < len(models) else (models[0] if models else '')
+    else:
+        model = models[0] if models else ''
+
+    if hide_sn:
+        sn = None
+        filenames = []
+        user_entered = False
+        user_sn = None
+    elif file_index is not None:
         sn = sns[file_index] if file_index < len(sns) else (sns[0] if sns else None)
         filenames = [fnames[file_index]] if file_index < len(fnames) else fnames
     else:
-        model = models[0] if models else ''
         sn = None
         for s in sns:
             if is_real_detected_sn(s):
@@ -3601,6 +3760,10 @@ def em_model_id_for_title(z, file_index=None):
             sn = sns[0]
         filenames = fnames
 
+    id_clause = format_title_id_clause(
+        sn=sn, filenames=filenames, user_sn=user_sn, user_entered=user_entered)
+    if model is None:
+        return id_clause.strip()
     return format_em_title_model_line(
         model, sn=sn, filenames=filenames, user_sn=user_sn, user_entered=user_entered)
 
@@ -4318,13 +4481,10 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     # Count total number of tests
     total_tests = len(all_params)
     
-    ship_display = ship_title_prefix(rxn.get('ship_name'))
-    description_suffix = description_title_suffix(rxn.get('cruise_name'))
-    date_suffix = defined_date_text(date_str)
-    date_suffix = f' - {date_suffix}' if date_suffix else ''
+    date_suffix = plot_title_date_suffix(rxn, date_str)
     
     title_str = f'RX Noise vs {test_type.capitalize()} (Binned)\n' + \
-                f'{ship_display}{em_model_id_for_title(rxn)}{description_suffix}\n' + \
+                f'{system_id_title_line(rxn)}\n' + \
                 f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}'
     
     ax.set_title(title_str, fontsize=14, fontweight='bold')
@@ -4758,13 +4918,10 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         # Count total number of tests
         total_tests = len(all_params)
         
-        ship_display = ship_title_prefix(rxn.get('ship_name'))
-        description_suffix = description_title_suffix(rxn.get('cruise_name'))
-        date_suffix = defined_date_text(date_str)
-        date_suffix = f' - {date_suffix}' if date_suffix else ''
+        date_suffix = plot_title_date_suffix(rxn, date_str)
         
         title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - 2kt\n' +
-                    f'{ship_display}{em_model_id_for_title(rxn)}{description_suffix}\n' +
+                    f'{system_id_title_line(rxn)}\n' +
                     f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}')
         
         ax.set_title(title_str, fontsize=14, fontweight='bold')
@@ -4908,11 +5065,9 @@ def plot_rx_noise_binned_combined_frequencies(rxn_all_frequencies, save_figs=Tru
     except:
         date_str = 'Unknown'
     
-    date_suffix = defined_date_text(date_str)
-    date_suffix = f' - {date_suffix}' if date_suffix else ''
+    date_suffix = plot_title_date_suffix(rxn_all_frequencies[0], date_str)
     title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - {bin_size}kt - All Frequencies{date_suffix}\n' +
-                f'{em_model_id_for_title(rxn_all_frequencies[0])}' +
-                description_title_suffix(rxn_all_frequencies[0].get('cruise_name')))
+                f'{system_id_title_line(rxn_all_frequencies[0])}')
     ax.set_title(title_str, fontsize=14, fontweight='bold')
     
     # Add legend
@@ -5302,13 +5457,9 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     model = rxn.get('model', ['Unknown'])[0] if rxn.get('model') else 'Unknown'
     sn = rxn.get('sn', ['Unknown'])[0] if rxn.get('sn') else 'Unknown'
     
-    ship_display = ship_title_prefix(rxn.get('ship_name'))
-    description_suffix = description_title_suffix(rxn.get('cruise_name'))
-    
     # Get date if available
     date = rxn.get('date', [''])[0] if rxn.get('date') else ''
-    date_suffix = defined_date_text(date)
-    date_suffix = f' - {date_suffix}' if date_suffix else ''
+    date_suffix = plot_title_date_suffix(rxn, date)
     
     # Get frequency information
     freq = rxn.get('frequency', ['Unknown'])[0] if rxn.get('frequency') else 'Unknown'
@@ -5320,7 +5471,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     total_tests = sum(binned_counts.values()) if binned_counts else 0
     
     title_str = (f'RX Noise vs {param_unit} (Binned)\n' +
-                f'{ship_display}{em_model_id_for_title(rxn)}{description_suffix}\n' +
+                f'{system_id_title_line(rxn)}\n' +
                 f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}')
     
     ax.set_title(title_str, fontsize=12, fontweight='bold', pad=20)

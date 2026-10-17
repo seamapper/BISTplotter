@@ -268,6 +268,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ignore_sis5_user_disabled_on_sog = False
         self._ignore_sis5_syncing = False
         self._sn_user_entered = False
+        self._model_user_entered = False
+        self._date_user_entered = False
+        self._sn_autofill_text = '999'
+        self._date_autofill_text = 'yyyy/mm/dd'
+        self._sysinfo_programmatic_update = False
+        self._sysinfo_replot_active = False
         self._sn_programmatic_update = False
 
         # Navigation controls for multiple charts
@@ -322,13 +328,15 @@ class MainWindow(QtWidgets.QMainWindow):
             optional_field.textChanged.connect(
                 lambda _text, field=optional_field: self._refresh_optional_sysinfo_style(field))
             optional_field.editingFinished.connect(
-                lambda field=optional_field: self._finalize_optional_sysinfo(field))
+                lambda field=optional_field: self._on_optional_sysinfo_edited(field))
             optional_field.installEventFilter(self)
             self._set_optional_sysinfo_undefined(optional_field)
         self.date_tb.returnPressed.connect(self.on_system_info_committed)
+        self.date_tb.editingFinished.connect(self._on_date_user_edited)
         self.warn_user_chk.stateChanged.connect(self.verify_system_info)
 
         self.type_cbox.activated.connect(self.update_buttons)
+        self.type_cbox.activated.connect(self.auto_plot_bist_type)
         self.type_cbox.currentTextChanged.connect(self.update_buttons)  # Also handle text changes
         self.noise_test_type_cbox.activated.connect(self.update_buttons)
         self.noise_test_type_cbox.currentTextChanged.connect(self.auto_plot_noise_type)
@@ -1288,6 +1296,30 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log('Warning: Invalid RX noise range values, using default range')
             return []
 
+    def _apply_detected_bist_type(self):
+        """Set the BIST pulldown from loaded files: RX noise, then TX, then RX channels."""
+        found = set()
+        for path in self.filenames:
+            if not path:
+                continue
+            bist_type, _sis = read_bist.verify_bist_type(path)
+            found.update(bist_type)
+        # Combo box is TX, RX channels, RX noise (bist_list indexes 1, 2, 3).
+        if 3 in found:
+            combo_index = 2
+        elif 1 in found:
+            combo_index = 0
+        elif 2 in found:
+            combo_index = 1
+        else:
+            return
+        self.type_cbox.blockSignals(True)
+        self.type_cbox.setCurrentIndex(combo_index)
+        self.type_cbox.blockSignals(False)
+        self.update_buttons()
+        self.plot_bist_btn.setStyleSheet(self._export_btn_style_pending)
+        self.update_log('BIST type set to ' + self.type_cbox.currentText())
+
     def add_files(self, ftype_filter, input_dir='HOME', include_subdir=False):  # add all files of specified type in dir
         if input_dir == 'HOME':  # select files manually if input_dir not specified as optional argument
             # Load last used input directory from session config
@@ -1326,6 +1358,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(fnames_skip) > 0:  # skip any files already added, update log
             self.update_log('Skipping ' + str(len(fnames_skip)) + ' file(s) already added')
 
+        added_any = False
         for f in range(len(fnames_new)):  # add the new files only after verifying BIST type
             bist_type, sis_ver_found = read_bist.verify_bist_type(fnames_new[f])
             print(bist_type, sis_ver_found)
@@ -1341,6 +1374,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     new_item.setData(1, fnames_new[f].replace('\\','/'))  # set full file path as data, role 1
                     new_item.setText((path + '/') * int(self.show_path_chk.isChecked()) + fname)  # set text, show path
                     self.file_list.addItem(new_item)
+                    added_any = True
                     self._clear_startup_action_highlight()
                     # self.update_log('Added ' + fname)  # fnames_new[f].rsplit('/',1)[-1])
                     bist_types_found = [self.bist_list[idx_found] for idx_found in bist_type]
@@ -1358,8 +1392,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_fnum_lbl.setText('Current file count: ' + str(len(self.filenames)))
         if fnames_new:
             self._sn_user_entered = False
+            self._model_user_entered = False
+            self._date_user_entered = False
             self.sn_updated = False
             self._clear_export_button_highlight()
+        if added_any:
+            self._apply_detected_bist_type()
 
     def show_file_paths(self):
         # show or hide path for all items in file_list according to show_paths_chk selection
@@ -2075,12 +2113,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self._clear_export_button_highlight()
 
         if self.filenames == []:  # all files have been removed
+            self.plot_bist_btn.setStyleSheet(self._export_btn_style_default)
             self.update_log('Cleared all files')
             self.cruise_name_updated = False
             self.model_updated = False
             self.ship_name_updated = False
             self.sn_updated = False
             self._sn_user_entered = False
+            self._model_user_entered = False
+            self._date_user_entered = False
             self.swell_dir_updated = False
             self.swell_dir_tb.setText(self.swell_dir_default)
             self.swell_dir_message = True
@@ -2216,8 +2257,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.update_log('Selected ' + str(bist_count) + ' ' + self.type_cbox.currentText() + ' file(s)')
 
-        if self.warn_user_chk.isChecked():  # if desired, check the system info in selected files
-            self.verify_system_info()
+        self.verify_system_info(warn=self.warn_user_chk.isChecked())
 
     def clear_bist(self):
         self.get_current_file_list()
@@ -2263,11 +2303,38 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _apply_sn_title_metadata(self, bist):
-        """Attach user SN override flags used by plot title helpers in read_bist."""
+        """Tell plot titles which system-info fields to show, hide, or replace."""
         if bist is None:
             return
-        bist['sn_user_entered'] = bool(getattr(self, '_sn_user_entered', False))
+        self.refresh_system_info_from_ui()
+        conflicts = set(getattr(self, 'conflicting_fields', []) or [])
+        sn_user = bool(getattr(self, '_sn_user_entered', False))
+        model_user = bool(getattr(self, '_model_user_entered', False))
+        date_user = bool(getattr(self, '_date_user_entered', False))
+        hide = set()
+        if 'model' in conflicts and not model_user:
+            hide.add('model')
+        if 'sn' in conflicts and not sn_user:
+            hide.add('sn')
+        if 'date' in conflicts and not date_user:
+            hide.add('date')
+        if sn_user and not self.sn_tb.text().strip():
+            hide.add('sn')
+        if date_user and not read_bist.defined_date_text(self.date_tb.text()):
+            hide.add('date')
+        bist['title_hide'] = hide
+        bist['sn_user_entered'] = sn_user
         bist['sn_user_value'] = self.sn_tb.text().strip()
+        bist['model_user_entered'] = model_user
+        bist['model_user_value'] = self.model_number
+        bist['date_user_entered'] = date_user
+        bist['date_user_value'] = self.date_tb.text().strip()
+        ship = self._optional_sysinfo_text(self.ship_tb)
+        description = self._optional_sysinfo_text(self.cruise_tb)
+        if 'ship_name' in bist:
+            bist['ship_name'] = [ship for _ in bist['ship_name']] if isinstance(bist['ship_name'], list) else ship
+        if 'cruise_name' in bist:
+            bist['cruise_name'] = [description for _ in bist['cruise_name']] if isinstance(bist['cruise_name'], list) else description
 
     def refresh_system_info_from_ui(self):
         """Read system information fields into instance attributes."""
@@ -2288,17 +2355,69 @@ class MainWindow(QtWidgets.QMainWindow):
         if sender.objectName() in self.missing_fields:
             self.missing_fields.remove(sender.objectName())
 
-    def _on_sn_user_edited(self):
-        """Remember that the user set the serial number (not an auto-fill from BIST files)."""
-        if not getattr(self, '_sn_programmatic_update', False):
+    def _mark_sysinfo_user_edit(self, field_name):
+        """Treat a real edit as the value to show, even when files still disagree."""
+        if field_name == 'sn':
             self._sn_user_entered = True
+        elif field_name == 'model':
+            self._model_user_entered = True
+        elif field_name == 'date':
+            self._date_user_entered = True
+        if field_name in self.conflicting_fields:
+            self.conflicting_fields.remove(field_name)
+            self.update_sys_info_colors()
+
+    def _replot_sysinfo_if_shown(self):
+        if getattr(self, '_sysinfo_replot_active', False):
+            return
+        self._sysinfo_replot_active = True
+        try:
+            self.auto_update_plots_for_system_info()
+        finally:
+            self._sysinfo_replot_active = False
+
+    def _on_optional_sysinfo_edited(self, field):
+        """Leave ship name and description out of titles when the user clears them."""
+        self._finalize_optional_sysinfo(field)
+        if field.hasFocus():
+            return
+        self._replot_sysinfo_if_shown()
+
+    def _on_sn_user_edited(self):
+        """Remember a serial number the user typed, and drop it from titles if they clear it."""
+        if getattr(self, '_sn_programmatic_update', False):
+            return
+        if self.sn_tb.text().strip() == getattr(self, '_sn_autofill_text', None):
+            return
+        self._mark_sysinfo_user_edit('sn')
+        if self.sn_tb.hasFocus():
+            return
+        self.update_system_info()
+        self._replot_sysinfo_if_shown()
+
+    def _on_date_user_edited(self):
+        """Remember a date the user typed, and drop it from titles if they clear it."""
+        if getattr(self, '_sysinfo_programmatic_update', False):
+            return
+        if self.date_tb.text().strip() == getattr(self, '_date_autofill_text', None):
+            return
+        self._mark_sysinfo_user_edit('date')
+        if self.date_tb.hasFocus():
+            return
+        self.update_system_info()
+        self._replot_sysinfo_if_shown()
 
     def on_system_info_committed(self):
         """Apply system info after Enter or model selection; replot if plots are already shown."""
-        if self.sender() == self.sn_tb:
-            self._sn_user_entered = True
+        sender = self.sender()
+        if sender == self.sn_tb and self.sn_tb.text().strip() != getattr(self, '_sn_autofill_text', None):
+            self._mark_sysinfo_user_edit('sn')
+        elif sender == self.model_cbox:
+            self._mark_sysinfo_user_edit('model')
+        elif sender == self.date_tb and self.date_tb.text().strip() != getattr(self, '_date_autofill_text', None):
+            self._mark_sysinfo_user_edit('date')
         self.update_system_info()
-        self.auto_update_plots_for_system_info()
+        self._replot_sysinfo_if_shown()
 
     def auto_update_plots_for_system_info(self):
         """Re-run plotting with updated system info (all chart types)."""
@@ -2319,6 +2438,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_system_info_from_ui()
         self.auto_update_plot()
     
+    def auto_plot_bist_type(self, _index=None):
+        """Plot when the user changes BIST type and a loaded file contains that type."""
+        if self.file_list.count() == 0:
+            return
+        bist_type = self.type_cbox.currentText()
+        if len(self.file_list.selectedItems()) == 0:
+            self.update_log('No ' + bist_type + ' data in the loaded files')
+            QtWidgets.QMessageBox.warning(
+                self, 'BIST type',
+                'None of the loaded files contain ' + bist_type + ' data.')
+            return
+        self.update_log('Auto-plotting ' + bist_type)
+        self.plot_bist()
+
     def auto_plot_noise_type(self):
         """Automatically plot when noise test type is selected"""
         # Only auto-plot if we're in noise testing mode and have files selected
@@ -2520,7 +2653,9 @@ class MainWindow(QtWidgets.QMainWindow):
             import traceback
             self.update_log(f"Traceback: {traceback.format_exc()}")
 
-    def verify_system_info(self):  # prompt user for missing fields or warn if different
+    def verify_system_info(self, warn=None):  # prompt user for missing fields or warn if different
+        if warn is None:
+            warn = self.warn_user_chk.isChecked()
         self.missing_fields = []
         self.conflicting_fields = []
         self.model_updated = False
@@ -2531,13 +2666,11 @@ class MainWindow(QtWidgets.QMainWindow):
         fnames_sel = [self.file_list.item(f).data(1) for f in range(self.file_list.count())
                       if self.file_list.item(f).isSelected()]
 
-        if self.file_list.count() > 0:
-            if self.warn_user_chk.isChecked():
-                if not fnames_sel:  # prompt user to select files if none selected
-                    self.update_log('Please select BIST type and click Select BISTs to verify system info')
-                else:
-                    # elif self.warn_user_chk.isChecked():
-                    self.update_log('Checking ' + str(len(fnames_sel)) + ' files for model, serial number, and date')
+        if self.file_list.count() > 0 and warn:
+            if not fnames_sel:  # prompt user to select files if none selected
+                self.update_log('Please select BIST type and click Select BISTs to verify system info')
+            else:
+                self.update_log('Checking ' + str(len(fnames_sel)) + ' files for model, serial number, and date')
 
         for fname in fnames_sel:  # loop through files, verify BIST type, and plot if matches test type
             fname_str = fname[fname.rfind('/') + 1:].rstrip()
@@ -2567,10 +2700,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif sys_info['model'] == '2042':
                     model = '2042'
 
-                if not self.model_updated:  # update model with first model found
-                    # self.model_cbox.setCurrentIndex(self.model_cbox.findText('EM '+sys_info['model']))
-                    self.model_cbox.setCurrentIndex(self.model_cbox.findText('EM '+model))
-                    self.update_log('Updated model to ' + self.model_cbox.currentText() + ' (first model found)')
+                if not self.model_updated and not self._model_user_entered:  # update model with first model found
+                    model_label = 'EM ' + model
+                    if self.model_cbox.currentText() != model_label:
+                        self.model_cbox.setCurrentIndex(self.model_cbox.findText(model_label))
+                        self.update_log('Updated model to ' + self.model_cbox.currentText() + ' (first model found)')
                     self.model_updated = True
 
                 # elif 'EM '+sys_info['model'] != self.model_cbox.currentText():  # model was updated but new model found
@@ -2582,10 +2716,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
             if sys_info['sn']:
                 if not self._sn_user_entered and not self.sn_updated:
-                    self._sn_programmatic_update = True
-                    self.sn_tb.setText(str(sys_info['sn']))
-                    self._sn_programmatic_update = False
-                    self.update_log('Updated serial number to ' + self.sn_tb.text() + ' (first S/N found)')
+                    sn_text = str(sys_info['sn']).strip()
+                    if self.sn_tb.text().strip() != sn_text:
+                        self._sn_programmatic_update = True
+                        self.sn_tb.setText(sn_text)
+                        self._sn_programmatic_update = False
+                        self.update_log('Updated serial number to ' + self.sn_tb.text() + ' (first S/N found)')
+                    self._sn_autofill_text = self.sn_tb.text().strip()
 
                     # SIS 5 only: explain PU- vs FN- prefix in activity log
                     if sis_ver_found == 5 and (str(sys_info['sn']).startswith('PU-') or str(sys_info['sn']).startswith('FN-')):
@@ -2601,9 +2738,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.conflicting_fields.append('sn')
 
             if sys_info['date']:
-                if not self.date_updated:  # update date with first date found
-                    self.date_tb.setText(sys_info['date'])
-                    self.update_log('Updated date to ' + self.date_tb.text() + ' (first date found)')
+                if not self.date_updated and not self._date_user_entered:  # update date with first date found
+                    date_text = str(sys_info['date']).strip()
+                    if self.date_tb.text().strip() != date_text:
+                        self._sysinfo_programmatic_update = True
+                        self.date_tb.setText(date_text)
+                        self._sysinfo_programmatic_update = False
+                        self.update_log('Updated date to ' + self.date_tb.text() + ' (first date found)')
+                    self._date_autofill_text = self.date_tb.text().strip()
                     self.date_updated = True
 
                 elif sys_info['date'] != self.date_tb.text().strip():  # date was updated but new date found
@@ -2621,7 +2763,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # if self.missing_fields or self.conflicting_fields:
         self.update_sys_info_colors()
-        if self.warn_user_chk.isChecked() and any(self.missing_fields or self.conflicting_fields):
+        if warn and any(self.missing_fields or self.conflicting_fields):
             user_warning = QtWidgets.QMessageBox.question(self, 'System info check',
                 'Red field(s) are either:\n\n' +
                 '          1) not available from the selected BIST(s), or\n' +
@@ -3143,6 +3285,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log('     ' + str(i + 1) + ". " + bist_fail_list[i])
 
             self.update_log('Plotting ' + str(bist_count) + ' ' + self.type_cbox.currentText() + ' BIST files...')
+            self.verify_system_info(warn=False)
             self._apply_sn_title_metadata(bist)
             self.last_plotted_bist = bist
             self.last_bist_test_type = bist_test_type
@@ -3247,12 +3390,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     fname_str = bist['filename'][0][bist['filename'][0].rfind("/") + 1:-4]
                     freq_labels = [str(f) for f in bist['freq_range'][file_index][test_index]]
                     
-                    # Generate the first plot (heatmap) using plot_rx_z
+                    # Heatmap and line+heatmap are one pair per test, then the next test.
                     heatmap_figure = read_bist.plot_rx_z(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
-                    self._append_rx_channel_plot_results(
-                        heatmap_figure, bist, 'heatmap', fname_str, freq_labels)
-                    
-                    # Generate the second plot (line + heatmap) using plot_rx_z_line_heatmap
                     lineheat_figure = read_bist.plot_rx_z_line_heatmap(
                         bist,
                         save_figs=False,
@@ -3260,8 +3399,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         return_fig=True,
                         gui_mode=True
                     )
-                    self._append_rx_channel_plot_results(
-                        lineheat_figure, bist, 'line_heatmap', fname_str, freq_labels)
+                    self._append_rx_channel_plots_by_test(
+                        heatmap_figure, lineheat_figure, bist, fname_str, freq_labels)
 
                     # Generate the third plot (history) using plot_rx_z_history
                     history_figure = read_bist.plot_rx_z_history(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
@@ -4050,11 +4189,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 figure.subplots_adjust(top=0.88)
             except Exception:
                 pass
+        elif plot_type == 'tx_channels' and getattr(figure, '_bist_tx_style', None) == 2:
+            # Window resize keeps the tall-page spacing, which puts the line plot
+            # on top of the heatmap's upper tick labels and axis title.
+            self._layout_tx_style2_onscreen(figure)
         elif plot_type == 'tx_channels':
             try:
                 read_bist._center_axes_block_in_figure(figure, top_margin=0.88)
             except Exception:
                 pass
+        elif plot_type == 'rx_channels':
+            # Keep the bottom margin from the RX plot, then pull a clipped heatmap Y label back up.
+            for ax in figure.axes:
+                if ax.get_ylabel():
+                    read_bist._raise_ylabel_inside_figure(figure, ax)
         elif figure.get_suptitle():
             try:
                 figure.tight_layout(rect=[0, 0, 1, 0.93])
@@ -4062,6 +4210,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
 
         self.plot_figure_canvas.updateGeometry()
+
+    def _layout_tx_style2_onscreen(self, figure):
+        """Keep the TX line plot clear of the heatmap title and top labels."""
+        try:
+            figure.tight_layout(rect=[0, 0, 1, 0.84], pad=0.6, h_pad=2.6)
+        except Exception:
+            try:
+                figure.subplots_adjust(top=0.84, bottom=0.08, hspace=0.75)
+            except Exception:
+                pass
 
     def _resync_shown_figure_size(self):
         meta = getattr(self, '_plot_show_meta', None) or {}
@@ -4669,7 +4827,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 ax.set_ylabel('TX Channel (index starts at 0)', fontsize=label_fontsize)
 
                 # Set the super title
-                title_str = 'TX Channels BIST\n' + read_bist.em_model_id_for_title(bist, file_index=file_index) + '\n' + fname_str
+                title_str = 'TX Channels BIST\n' + read_bist.tx_channels_id_line(bist, file_index=file_index) + '\n' + \
+                            read_bist.tx_channels_detail_line(fname_str, bist, file_index=file_index)
                 fig.suptitle(title_str, fontsize=title_fontsize)
                 fig.set_size_inches(10, 12)
                 read_bist._center_axes_block_in_figure(fig, top_margin=0.88)
@@ -4682,7 +4841,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 subplot_height_ratio = 1.5
                 fig = plt.figure()
                 fig.set_size_inches(11, 16)
-                gs = gridspec.GridSpec(2, 1, height_ratios=[1, subplot_height_ratio])
+                fig._bist_tx_style = 2
+                gs = gridspec.GridSpec(2, 1, height_ratios=[1, subplot_height_ratio], hspace=0.55)
 
                 # Top plot: line plot for each slot across all channels
                 ax1 = plt.subplot(gs[0])
@@ -4708,7 +4868,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif tx_data_max > zmax:
                     tx_extend = 'max'
                 im = ax2.imshow(ztx, cmap=tx_cmap, vmin=zmin, vmax=zmax)
-                ax2.set_aspect('equal')
+                ax2.set_aspect('equal', anchor='N')
                 plt.gca().invert_yaxis()
 
                 # Set axis ticks for each subplot
@@ -4755,10 +4915,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 cbar.set_label(r'Impedance ($\Omega$, f=' + str(bist['frequency'][file_index][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
 
                 # Set the super title
-                title_str = 'TX Channels BIST\n' + read_bist.em_model_id_for_title(bist, file_index=file_index) + '\n' + fname_str
+                title_str = 'TX Channels BIST\n' + read_bist.tx_channels_id_line(bist, file_index=file_index) + '\n' + \
+                            read_bist.tx_channels_detail_line(fname_str, bist, file_index=file_index)
                 fig.suptitle(title_str, fontsize=title_fontsize)
-                fig.tight_layout()
-                fig.subplots_adjust(top=0.87)
+                fig.subplots_adjust(left=0.10, right=0.96, bottom=0.08, top=0.84, hspace=0.75)
 
             # Save the figure if requested
             if save_figs:
@@ -4908,26 +5068,87 @@ class MainWindow(QtWidgets.QMainWindow):
             return [fig for fig in figure_or_list if fig is not None]
         return [figure_or_list]
 
-    def _append_rx_channel_plot_results(self, figure_or_list, bist, plot_subtype, fname_str, freq_list):
+    def _rx_channel_chart_labels(self, bist, plot_subtype):
+        """Navigation names in the same order plot_rx_z / history emit figures."""
+        if plot_subtype == 'history':
+            freqs = []
+            for freq_map in bist.get('freq_range', []):
+                if isinstance(freq_map, dict):
+                    for values in freq_map.values():
+                        if isinstance(values, (list, tuple)):
+                            freqs.extend(values)
+            labels = []
+            for freq in sorted(set(freqs), key=str):
+                labels.append('RX Channels History - ' + str(freq).replace('.0', '') + ' kHz')
+            return labels
+
+        prefix = {
+            'heatmap': 'RX Channels Heatmap',
+            'line_heatmap': 'RX Channels Line+Heatmap',
+        }.get(plot_subtype, 'RX Channels')
+        labels = []
+        filenames = bist.get('filename', [])
+        rx = bist.get('rx', [])
+        freq_range = bist.get('freq_range', [])
+        for i in range(len(filenames)):
+            fname = str(filenames[i]).replace('\\', '/')
+            fname = fname[fname.rfind('/') + 1:]
+            if fname.lower().endswith('.txt'):
+                fname = fname[:-4]
+            tests = rx[i] if i < len(rx) and isinstance(rx[i], dict) else {}
+            freq_map = freq_range[i] if i < len(freq_range) and isinstance(freq_range[i], dict) else {}
+            multi_test = len(tests) > 1
+            for t in tests.keys():
+                freqs = freq_map.get(t, [])
+                if not isinstance(freqs, (list, tuple)):
+                    freqs = [freqs]
+                test_bit = (' test ' + str(t)) if multi_test else ''
+                for freq in freqs:
+                    labels.append(prefix + ' - ' + fname + test_bit + ' - ' + str(freq).replace('.0', '') + ' kHz')
+        return labels
+
+    def _append_rx_channel_plots_by_test(self, heatmap_figures, line_figures, bist, fname_str, freq_list):
+        """Register heatmap then line+heatmap for each test before the next test."""
+        heatmaps = self._normalize_plot_figures(heatmap_figures)
+        lines = self._normalize_plot_figures(line_figures)
+        heat_labels = self._rx_channel_chart_labels(bist, 'heatmap')
+        line_labels = self._rx_channel_chart_labels(bist, 'line_heatmap')
+        for i in range(max(len(heatmaps), len(lines))):
+            if i < len(heatmaps):
+                label = heat_labels[i] if i < len(heat_labels) else None
+                self._append_rx_channel_plot_results(
+                    heatmaps[i], bist, 'heatmap', fname_str, freq_list, label=label)
+            if i < len(lines):
+                label = line_labels[i] if i < len(line_labels) else None
+                self._append_rx_channel_plot_results(
+                    lines[i], bist, 'line_heatmap', fname_str, freq_list, label=label)
+
+    def _append_rx_channel_plot_results(self, figure_or_list, bist, plot_subtype, fname_str, freq_list, label=None):
         """Register one or more RX channel figures for GUI navigation."""
+        labels = [label] if label is not None else self._rx_channel_chart_labels(bist, plot_subtype)
         subtype_labels = {
             'heatmap': 'RX Channels Heatmap',
             'line_heatmap': 'RX Channels Line+Heatmap',
             'history': 'RX Channels History',
         }
         label_prefix = subtype_labels.get(plot_subtype, 'RX Channels')
-        for freq_index, fig in enumerate(self._normalize_plot_figures(figure_or_list)):
+        for chart_index, fig in enumerate(self._normalize_plot_figures(figure_or_list)):
             fig = self.apply_gui_font_sizes(fig)
-            freq_str = str(freq_list[freq_index]) if freq_index < len(freq_list) else "Unknown"
+            figure_index = len(self.all_figures)
             self.frequency_data.append({
                 'bist': bist,
                 'plot_type': 'rx_channels',
                 'plot_subtype': plot_subtype,
-                'freq_index': freq_index,
+                'freq_index': chart_index,
+                'figure_index': figure_index,
             })
             self.all_figures.append(fig)
             self.total_charts += 1
-            self.freq_list.append(f"{label_prefix} - {fname_str} - {freq_str} kHz")
+            if chart_index < len(labels):
+                self.freq_list.append(labels[chart_index])
+            else:
+                freq_str = str(freq_list[chart_index]) if chart_index < len(freq_list) else "Unknown"
+                self.freq_list.append(f"{label_prefix} - {fname_str} - {freq_str} kHz")
 
     def apply_gui_font_sizes(self, figure):
         """Apply smaller font sizes to a figure for GUI display"""
