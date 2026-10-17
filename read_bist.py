@@ -1170,11 +1170,11 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
                 ax1.grid(which='major', color='k', linewidth=1)
                 ax2.grid(which='minor', color='k', linewidth=1)
 
-                ax1.set_xlabel('RX Channel (index starts at 0)', fontsize=axfsize)
+                ax1.set_xlabel('RX Channel', fontsize=axfsize)
                 ax1.set_ylabel(value_label, fontsize=axfsize)
                 ax1.xaxis.set_label_position('top')
-                ax2.set_ylabel('RX Board (index starts at 0)', fontsize=axfsize)
-                ax2.set_xlabel('RX Channel (index starts at 0)', fontsize=axfsize)
+                ax2.set_ylabel('RX Board', fontsize=axfsize)
+                ax2.set_xlabel('RX Channel', fontsize=axfsize)
                 ax2.xaxis.set_label_position('top')
 
                 fig._bist_rx_channel_hover = (ax2, im, rx_data)
@@ -1215,6 +1215,19 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
         return figures
     elif return_fig:
         return None
+
+
+def _rx_history_trace(values, n_channels=32):
+    """Module index and flattened impedance for one history trace.
+
+    EM712 files can have 4 or 8 RX boards, so traces are not all the same length.
+    Returns None when the array is not one row of channels per board.
+    """
+    arr = np.asarray(values, dtype=float)
+    if arr.ndim != 2 or arr.shape[1] != n_channels or arr.size == 0:
+        return None
+    flat = np.ravel(arr)
+    return np.arange(1, flat.size + 1), flat
 
 
 def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_mode=False):
@@ -1262,8 +1275,8 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
     print('reduced set of freqs: ', f_set)
     print('number of frequencies detected:', n_freq)
 
-    # n_rx_boards = np.size(z['rx'][0], 0)
-    n_rx_boards = np.size(z['rx'][0][0][0], 0)  # assumed constant for all tests
+    # First file sets the initial axis. Later EM712 traces can have more boards.
+    n_rx_boards = np.size(z['rx'][0][0][0], 0)
     n_rx_channels = 32  # this should probably always be 32 (boards are 'rx32')
     n_rx_modules = n_rx_channels*n_rx_boards
     print('n_rx_boards is', n_rx_boards)
@@ -1271,7 +1284,6 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
     print('n_rx_modules is', n_rx_modules)
 
     colors = plt.cm.rainbow(np.linspace(0, 1, len(yrs)))  # set up line colors over number of years
-    zrx_module = np.arange(1, n_rx_modules+1)  # range of RX modules for plotting (unlike channels, this starts at 1)
     # zrx_channel = np.tile(np.arange(0, n_rx_channels), [n_rx_boards, 1])  # array of zrx chans for plotting (start at 0)
 
     # set axis and label parameters
@@ -1311,6 +1323,7 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
     # idx_last = np.argmax(bist_time_obj)
     # idx_last = []
 
+    history_figures = []
     for f in range(len(f_set)):  # loop through all frequency sets (may not be parsed in same order)
         bist_count = 0
         print('working on frequency range', f_set[f])  # z['freq_range'][0][f])
@@ -1330,6 +1343,7 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
         bist_test_times = []
         zrx_last = []
         zrx_array_last = []
+        module_count = n_rx_modules
 
         for y in range(len(yrs)):  # loop through all years for this freq
             print('working on year =', yrs[y])
@@ -1343,41 +1357,6 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
                     # if z['date'][i][:4] == yrs[y]:  # check if this BIST matches current year
                     if z['test_datetime'][i][t].strftime('%Y') == yrs[y]:  # check if test year matches desired year
                         print('year matches')
-                        print('z[rx_limits] =', z['rx_limits'])
-                        print('z[rx_limits][i] =', z['rx_limits'][i])
-                        print('z[rx_limits][i][t] =', z['rx_limits'][i][t])
-
-                        # get limits parsed for this BIST
-                        # zrx_limits = z['rx_limits'][i]
-                        # zrx_array_limits = z['rx_array_limits'][i]
-                        zrx_limits = _pair_limits(z['rx_limits'][i][t][f])
-                        print('got zrx_limits = ', zrx_limits)
-
-                        print('*** trying to get zrx_units for i, t, f = ', i, t, f)
-                        print('z[rx_units] = ', z['rx_units'])
-                        zrx_unit = z['rx_units'][i][t][f]
-                        print('in history plotter, zrx_unit = ', zrx_unit)
-
-                        # print('trying to get rx_array_limits from ', z['rx_array_limits'])
-                        try:
-                            zrx_array_limits = _pair_limits(z['rx_array_limits'][i][t][f])
-                        except:
-                            zrx_array_limits = [0, 1]
-
-                        # default dy_tick of 50 (for non-EM2040) may be too large for some systems with tighter limits
-                        zrx_span = zrx_limits[1] - zrx_limits[0]
-                        if zrx_span < dy_tick:
-                            dy_tick_local = [10, 1][int(zrx_span < 10)]
-                        else:
-                            dy_tick_local = dy_tick
-
-                        zrx_array_span = zrx_array_limits[1] - zrx_array_limits[0]
-                        if zrx_array_span < dy_tick_array:
-                            dy_tick_array_local = [10, 1][int(zrx_array_span < 10)]
-                        else:
-                            dy_tick_array_local = dy_tick_array
-
-                        print('in history plotter, zrx_limits and zrx_array_limits are', zrx_limits, zrx_array_limits)
 
                         # loop through all available frequency ranges for this BIST
                         # for j in range(len(z['freq_range'][i])):
@@ -1385,6 +1364,31 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
                             # print('-----> j =', j)
                             # # find idx of data that match this frequency range
                             if z['freq_range'][i][t][j] == f_set[f]:  # check if BIST freq matches freq of interest
+                                # Limits follow this test's frequency index, not the
+                                # position of the frequency in the sorted set.
+                                zrx_limits = _pair_limits(z['rx_limits'][i][t][j])
+                                print('got zrx_limits = ', zrx_limits)
+                                zrx_unit = z['rx_units'][i][t][j]
+                                print('in history plotter, zrx_unit = ', zrx_unit)
+                                try:
+                                    zrx_array_limits = _pair_limits(z['rx_array_limits'][i][t][j])
+                                except Exception:
+                                    zrx_array_limits = [0, 1]
+
+                                # default dy_tick of 50 (for non-EM2040) may be too large for some systems with tighter limits
+                                zrx_span = zrx_limits[1] - zrx_limits[0]
+                                if zrx_span < dy_tick:
+                                    dy_tick_local = [10, 1][int(zrx_span < 10)]
+                                else:
+                                    dy_tick_local = dy_tick
+
+                                zrx_array_span = zrx_array_limits[1] - zrx_array_limits[0]
+                                if zrx_array_span < dy_tick_array:
+                                    dy_tick_array_local = [10, 1][int(zrx_array_span < 10)]
+                                else:
+                                    dy_tick_array_local = dy_tick_array
+
+                                print('in history plotter, zrx_limits and zrx_array_limits are', zrx_limits, zrx_array_limits)
 
                                 # if i == idx_last:  # store for final plotting in black if this is most recent data
                                 # check whether this bist test time has already been plotted for this freq
@@ -1423,15 +1427,14 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
                                 # print('the shape of zrx is', np.shape(zrx))
 
                                 # skip if not 32 RX channels (parser err? verify this is the case for all RX xdcr cases)
-                                # if zrx.shape[1] == n_rx_channels and zrx_array.shape[1] == n_rx_channels:
-                                if all([np.size(z, 1) == n_rx_channels for z in [zrx, zrx_array]]):
-                                    # print('*** both arrays have size along dim 1 == n_rx_channels, plotting!')
-                                # if np.shape(zrx, 1) == n_rx_channels and np.shape(zrx_array, 1) == n_rx_channels
-                                    # plot zrx_array history in top subplot, store artist for legend
-                                    # print('using colors[y]=', colors[y])
-                                    ax1.plot(zrx_module, zrx.flatten(), color=colors[y], linewidth=2)
-                                    # print('zrx_array.flatten = ', zrx_array.flatten())
-                                    line, = ax2.plot(zrx_module, zrx_array.flatten(), color=colors[y], linewidth=2)
+                                rx_trace = _rx_history_trace(zrx, n_rx_channels)
+                                array_trace = _rx_history_trace(zrx_array, n_rx_channels)
+                                if rx_trace is not None and array_trace is not None:
+                                    # Board count can change between EM712 files, so each
+                                    # trace uses its own module index.
+                                    ax1.plot(rx_trace[0], rx_trace[1], color=colors[y], linewidth=2)
+                                    line, = ax2.plot(array_trace[0], array_trace[1], color=colors[y], linewidth=2)
+                                    module_count = max(module_count, rx_trace[1].size, array_trace[1].size)
 
                                     # add legend artist (line) and label (year) if not already added
                                     if yrs[y] not in set(legend_labels):
@@ -1442,8 +1445,9 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
                                     print('zrx_limits=', zrx_limits)
                                     print('zrx_array_limits=', zrx_array_limits)
 
-                                    # define x ticks starting at 1 and running through n_rx_modules, with ticks at dx_tick
-                                    x_ticks = np.concatenate((np.array([1]), np.arange(dx_tick, n_rx_modules + dx_tick - 1, dx_tick)))
+                                    # define x ticks starting at 1 and running through the longest trace
+                                    dx_tick_local = max(dx_tick, 2 * int(round(module_count / n_rx_channels)))
+                                    x_ticks = np.concatenate((np.array([1]), np.arange(dx_tick_local, module_count + dx_tick_local - 1, dx_tick_local)))
                                     # y_ticks = np.arange(zrx_limits[0], zrx_limits[1] + 1, dy_tick)
                                     y_ticks = np.arange(zrx_limits[0], zrx_limits[1] + 1, dy_tick_local)
                                     # y_ticks_array = np.arange(zrx_array_limits[0], zrx_array_limits[1] + 1, dy_tick_array)
@@ -1474,13 +1478,13 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
                                                    fontsize=axfsize)
 
                                     if np.all(np.isnan(zrx_array)):  # plot text: no RX array impedance data available in BIST
-                                        ax2.text((n_rx_modules / 2) - 0.5, (zrx_array_limits[1]-zrx_array_limits[0])/2,
+                                        ax2.text((module_count / 2) - 0.5, (zrx_array_limits[1]-zrx_array_limits[0])/2,
                                                  'NO TRANSDUCER RX CHANNELS DATA',
                                                  fontsize=24, color='red', fontweight='bold',
                                                  horizontalalignment='center', verticalalignment='center_baseline')
 
                                     for ax in [ax1, ax2]:  # set xlim and aspect for both axes
-                                        ax.set_xlim(0, n_rx_modules+1)
+                                        ax.set_xlim(0, module_count + 1)
                                         ax.set(aspect='auto', adjustable='box')
                                         ax.set_xlabel('RX Module (index starts at 1)', fontsize=axfsize)
                                         ax.set_xticks(x_ticks)
@@ -1498,25 +1502,30 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
                                     print('Skipping ', z['filename'][i])
 
         # plot most recent BIST for this frequency
-        ax1.plot(zrx_module, zrx_last.flatten(), color='k', linewidth=2)
-        line, = ax2.plot(zrx_module, zrx_array_last.flatten(), color='k', linewidth=2)
-        legend_artists.append(line)  # add line artist to legend list
-        legend_labels.append('Last')
+        rx_last = _rx_history_trace(zrx_last, n_rx_channels)
+        array_last = _rx_history_trace(zrx_array_last, n_rx_channels)
+        if rx_last is not None and array_last is not None:
+            ax1.plot(rx_last[0], rx_last[1], color='k', linewidth=2)
+            line, = ax2.plot(array_last[0], array_last[1], color='k', linewidth=2)
+            legend_artists.append(line)  # add line artist to legend list
+            legend_labels.append('Last')
 
         # Export keeps the legend outside the axes; the saved image includes it.
         # On screen that anchor sits past the window edge, so keep it inside the axes.
-        if gui_mode:
-            l1 = ax1.legend(legend_artists, legend_labels,
-                            loc='upper right', fontsize=axfsize)
-            l2 = ax2.legend(legend_artists, legend_labels,
-                            loc='upper right', fontsize=axfsize)
-        else:
-            l1 = ax1.legend(legend_artists, legend_labels,
-                            bbox_to_anchor=(1.2, 1), borderaxespad=0,
-                            loc='upper right', fontsize=axfsize)
-            l2 = ax2.legend(legend_artists, legend_labels,
-                            bbox_to_anchor=(1.2, 1), borderaxespad=0,
-                            loc='upper right', fontsize=axfsize)
+        l1 = l2 = None
+        if legend_artists:
+            if gui_mode:
+                l1 = ax1.legend(legend_artists, legend_labels,
+                                loc='upper right', fontsize=axfsize)
+                l2 = ax2.legend(legend_artists, legend_labels,
+                                loc='upper right', fontsize=axfsize)
+            else:
+                l1 = ax1.legend(legend_artists, legend_labels,
+                                bbox_to_anchor=(1.2, 1), borderaxespad=0,
+                                loc='upper right', fontsize=axfsize)
+                l2 = ax2.legend(legend_artists, legend_labels,
+                                bbox_to_anchor=(1.2, 1), borderaxespad=0,
+                                loc='upper right', fontsize=axfsize)
         # legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 
         if yrmin == yrmax:
@@ -1548,13 +1557,19 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
             print('*** fig_name =', fig_name)
 
             fig.savefig(os.path.join(output_dir, fig_name), dpi=100,
-                        bbox_extra_artists=(t1, l1, l2), bbox_inches='tight')  # add bbox extra artists to avoid cutoff
+                        bbox_extra_artists=tuple(artist for artist in (t1, l1, l2) if artist is not None),
+                        bbox_inches='tight')  # add bbox extra artists to avoid cutoff
 
-        # Return figure if requested, otherwise close it
+        # Keep every frequency. Returning here used to stop after the first one.
         if return_fig:
-            return fig
+            history_figures.append(fig)
         else:
             plt.close()
+
+    if return_fig:
+        if len(history_figures) == 1:
+            return history_figures[0]
+        return history_figures or None
 
 
 # parse TX Channels BIST text file
@@ -2046,7 +2061,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                     tx_extend = 'max'
                 im = ax.imshow(tx_data, cmap=tx_cmap, vmin=zmin, vmax=zmax)
                 cbar = fig.colorbar(im, orientation='vertical', extend=tx_extend)
-                cbar.set_label(r'Impedance ($\Omega$, f=' + str(z['frequency'][i][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
+                cbar.set_label(r'Impedance ($\Omega$, f=' + tx_frequency_text(z, file_index=i) + ' kHz)', fontsize=cbar_fontsize)
 
                 # set ticks and labels (following modified from stackoverflow)
                 dy_tick = 5
@@ -2148,7 +2163,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
 
                 # set axis labels
                 ax1.set_xlabel('TX Channel (index starts at 0)', fontsize=axfsize)
-                ax1.set_ylabel(r'Impedance ($\Omega$, f=' + str(z['frequency'][i][0, 0]) + ' kHz)', fontsize=axfsize)
+                ax1.set_ylabel(r'Impedance ($\Omega$, f=' + tx_frequency_text(z, file_index=i) + ' kHz)', fontsize=axfsize)
                 ax1.xaxis.set_label_position('top')
                 ax2.set_ylabel('TX Slot (index starts at 1)', fontsize=axfsize)
                 ax2.set_xlabel('TX Channel (index starts at 0)', fontsize=axfsize)
@@ -2156,7 +2171,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
 
                 # add colorbar
                 cbar = fig.colorbar(im, orientation='horizontal', fraction=0.05, pad=0.05, extend=tx_extend)
-                cbar.set_label(r'Impedance ($\Omega$, f=' + str(z['frequency'][i][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
+                cbar.set_label(r'Impedance ($\Omega$, f=' + tx_frequency_text(z, file_index=i) + ' kHz)', fontsize=cbar_fontsize)
 
 
                 # set the super title
@@ -2376,9 +2391,7 @@ def plot_tx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
     # set the super title
     years_detail = years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')'
     title_str = 'TX Channels BIST\n' + tx_channels_id_line(z) + '\n' + \
-                tx_channels_detail_line(years_detail, z) + '\n' + \
-                'Frequency: ' + freq + ' kHz'
-                # 'Frequency: '+z['freq_range'][i][f]+' kHz'
+                tx_channels_detail_line(years_detail, z)
     t1 = fig.suptitle(title_str, fontsize=title_fontsize)
     if gui_mode:
         fig.set_size_inches(8, 6)
@@ -3587,10 +3600,10 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     except Exception:
         freq_title = 'Unknown'
 
+    detail = join_freq_date(rxn, freq_title, plot_title_date_suffix(rxn, date_str))
     title_str = apply_plot_title_suffix(
         'RX Noise vs. ' + test_type.capitalize() + '\n' +
-        system_id_title_line(rxn) + '\n' +
-        'Freq: ' + freq_title + plot_title_date_suffix(rxn, date_str),
+        system_id_title_line(rxn) + (('\n' + detail) if detail else ''),
         rxn)
     try:
         fig.suptitle(title_str, fontsize=16)
@@ -3749,9 +3762,9 @@ def _title_hidden(z, field):
 def system_id_title_line(z, file_index=None):
     """Ship, model/serial, and description joined for a title, skipping blank pieces."""
     parts = []
-    ship = defined_title_text(z.get('ship_name'))
+    ship = '' if _title_hidden(z, 'ship_name') else defined_title_text(z.get('ship_name'))
     ident = em_model_id_for_title(z, file_index=file_index)
-    description = defined_title_text(z.get('cruise_name'))
+    description = '' if _title_hidden(z, 'cruise_name') else defined_title_text(z.get('cruise_name'))
     if ship:
         parts.append(ship)
     if ident:
@@ -3766,8 +3779,36 @@ def tx_channels_id_line(z, file_index=None):
     return system_id_title_line(z, file_index=file_index)
 
 
+def _tx_model_at(z, index):
+    """Model string for one TX file, falling back to the first model."""
+    models = z.get('model') or []
+    if not isinstance(models, list):
+        models = [models]
+    if 0 <= index < len(models) and str(models[index]).strip():
+        return str(models[index])
+    if models and str(models[0]).strip():
+        return str(models[0])
+    return ''
+
+
+def _tx_band_frequency(model):
+    """Nominal band without units for models that should not show an average.
+
+    EM710, EM712, EM714, and EM304 return their band. Other models return ''.
+    """
+    number = str(model or '').replace('EM', '').replace(' ', '').strip()
+    for token in ('712', '714', '710', '304'):
+        if token in number:
+            return get_freq(number).replace('kHz', '').strip()
+    return ''
+
+
 def tx_frequency_text(z, file_index=None):
-    """Frequency numbers for a TX title, or '' when none can be read."""
+    """Frequency text for a TX title, without units.
+
+    EM710, EM712, EM714, and EM304 show the nominal band. Other models show
+    the frequency parsed from the file. Returns '' when none can be read.
+    """
     freqs = z.get('frequency') or []
     if not isinstance(freqs, list):
         freqs = [freqs]
@@ -3779,15 +3820,19 @@ def tx_frequency_text(z, file_index=None):
         indexes = []
     found = []
     for idx in indexes:
-        try:
-            arr = np.asarray(freqs[idx], dtype=float).ravel()
-        except (TypeError, ValueError):
-            continue
-        finite = arr[np.isfinite(arr)]
-        if finite.size == 0:
-            continue
-        value = float(arr[0]) if np.isfinite(arr[0]) else float(np.mean(finite))
-        text = f'{value:g}'
+        band = _tx_band_frequency(_tx_model_at(z, idx))
+        if band:
+            text = band
+        else:
+            try:
+                arr = np.asarray(freqs[idx], dtype=float).ravel()
+            except (TypeError, ValueError):
+                continue
+            finite = arr[np.isfinite(arr)]
+            if finite.size == 0:
+                continue
+            value = float(arr[0]) if np.isfinite(arr[0]) else float(np.mean(finite))
+            text = f'{value:g}'
         if text not in found:
             found.append(text)
     return ', '.join(found)
@@ -3878,6 +3923,41 @@ def _freq_title_part(freq_text):
     return f'Freq: {shown}'
 
 
+def frequency_title_text(z, fallback=''):
+    """Frequency title text, or '' when it is hidden or unknown.
+
+    A frequency typed in System Information replaces the value from the file.
+    """
+    if _title_hidden(z, 'frequency'):
+        return ''
+    if z.get('frequency_user_entered'):
+        text = str(z.get('frequency_user_value') or '').strip()
+    else:
+        text = '' if fallback is None else str(fallback).strip()
+    if not text or text.lower() in ('?', 'unknown', 'unknown khz', 'none'):
+        return ''
+    if text.lower().startswith('freq:'):
+        return text
+    if 'khz' not in text.lower() and not text.lower().endswith('hz'):
+        text = text + ' kHz'
+    return 'Freq: ' + text
+
+
+def join_freq_date(z, freq_display, date_suffix):
+    """Join a frequency title and a date suffix, skipping either when blank."""
+    parts = []
+    freq_part = frequency_title_text(z, freq_display)
+    if freq_part:
+        parts.append(freq_part)
+    date_text = str(date_suffix or '')
+    if date_text.startswith(' - '):
+        date_text = date_text[3:]
+    date_text = date_text.strip()
+    if date_text:
+        parts.append(date_text)
+    return ' - '.join(parts)
+
+
 def tx_channels_detail_line(detail, z, file_index=None, freq_text=None):
     """Third title line: [Freq: N kHz - ][date - ]filename.
 
@@ -3885,7 +3965,11 @@ def tx_channels_detail_line(detail, z, file_index=None, freq_text=None):
     freq_text overrides the frequency read from the file. Include units in
     freq_text when it is not a bare number (for example '200 kHz (High)').
     """
-    if freq_text is None:
+    if _title_hidden(z, 'frequency'):
+        freq_part = ''
+    elif z.get('frequency_user_entered'):
+        freq_part = frequency_title_text(z, '')
+    elif freq_text is None:
         freq = tx_frequency_text(z, file_index=file_index)
         freq_part = f'Freq: {freq} kHz' if freq else ''
     else:
@@ -4830,11 +4914,13 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     total_tests = len(all_params)
     
     date_suffix = plot_title_date_suffix(rxn, date_str)
+    detail = join_freq_date(rxn, freq_display, date_suffix)
+    detail = (detail + f' - Total Tests: {total_tests}') if detail else f'Total Tests: {total_tests}'
     
     title_str = apply_plot_title_suffix(
         f'RX Noise vs {test_type.capitalize()} (Binned)\n' +
         f'{system_id_title_line(rxn)}\n' +
-        f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}',
+        detail,
         rxn)
     
     ax.set_title(title_str, fontsize=14, fontweight='bold')
@@ -5261,11 +5347,13 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         total_tests = len(all_params)
         
         date_suffix = plot_title_date_suffix(rxn, date_str)
+        detail = join_freq_date(rxn, freq_display, date_suffix)
+        detail = (detail + f' - Total Tests: {total_tests}') if detail else f'Total Tests: {total_tests}'
         
         title_str = apply_plot_title_suffix(
             f'RX Noise vs {test_type.capitalize()} (Binned) - 2kt\n' +
             f'{system_id_title_line(rxn)}\n' +
-            f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}',
+            detail,
             rxn)
         
         ax.set_title(title_str, fontsize=14, fontweight='bold')
@@ -5800,15 +5888,17 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     freq = rxn.get('frequency', ['Unknown'])[0] if rxn.get('frequency') else 'Unknown'
     # Clean frequency display for title (remove brackets and other unwanted characters)
     clean_freq = str(freq).replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("'", "")
-    freq_display = f'{clean_freq} kHz' if freq != 'Unknown' else 'Unknown kHz'
+    freq_display = clean_freq if freq != 'Unknown' else ''
     
     # Calculate total tests
     total_tests = sum(binned_counts.values()) if binned_counts else 0
+    detail = join_freq_date(rxn, freq_display, date_suffix)
+    detail = (detail + f' - Total Tests: {total_tests}') if detail else f'Total Tests: {total_tests}'
     
     title_str = apply_plot_title_suffix(
         f'RX Noise vs {param_unit} (Binned)\n' +
         f'{system_id_title_line(rxn)}\n' +
-        f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}',
+        detail,
         rxn)
     
     ax.set_title(title_str, fontsize=12, fontweight='bold', pad=20)

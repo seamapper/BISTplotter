@@ -242,6 +242,7 @@ class MainWindow(QtWidgets.QMainWindow):
         
         self.missing_fields = []
         self.conflicting_fields = []
+        self._title_chk_user = set()
         self.model_updated = False
         self.sn_updated = False
         self.date_updated = False
@@ -273,8 +274,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sn_user_entered = False
         self._model_user_entered = False
         self._date_user_entered = False
+        self._freq_user_entered = False
         self._sn_autofill_text = '999'
         self._date_autofill_text = 'yyyy/mm/dd'
+        self._freq_autofill_text = '?'
         self._sysinfo_programmatic_update = False
         self._sysinfo_replot_active = False
         self._sn_programmatic_update = False
@@ -344,6 +347,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_optional_sysinfo_undefined(optional_field)
         self.date_tb.returnPressed.connect(self.on_system_info_committed)
         self.date_tb.editingFinished.connect(self._on_date_user_edited)
+        self.freq_tb.returnPressed.connect(self.on_system_info_committed)
+        self.freq_tb.editingFinished.connect(self._on_freq_user_edited)
+        for field, title_chk in self._title_checkboxes().items():
+            title_chk.stateChanged.connect(
+                lambda _state, name=field: self._on_title_checkbox_toggled(name))
         self.warn_user_chk.stateChanged.connect(self.verify_system_info)
 
         self.type_cbox.activated.connect(self.update_buttons)
@@ -536,33 +544,41 @@ class MainWindow(QtWidgets.QMainWindow):
                                       'Turn off warnings only if you are certain the system info is consistent')
 
         self.sys_info_lbl.setStyleSheet('font: 8pt')
-        model_tb_lbl = Label('Model:', 80, 20, 'model_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
+        title_tip = ('Include this value in plot titles. Turned off when loaded files '
+                     'leave it unknown or conflicting, until you check it or edit the value.')
+        self.model_title_chk = CheckBox('Model:', True, 'model_title_chk', title_tip, 100, 20)
         self.model_cbox = ComboBox(['EM 2040', 'EM 2042', 'EM 302', 'EM 304', 'EM 710', 'EM 712', 'EM 122', 'EM 124'],
                                    200, 20, 'model', 'Select the EM model')
         self.model_cbox.setStyleSheet("color: white;")
-        model_info_layout = BoxLayout([model_tb_lbl, self.model_cbox], 'h')
+        model_info_layout = BoxLayout([self.model_title_chk, self.model_cbox], 'h')
 
-        sn_tb_lbl = Label('Serial No.:', 80, 20, 'sn_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
+        self.sn_title_chk = CheckBox('Serial No.:', True, 'sn_title_chk', title_tip, 100, 20)
         self.sn_tb = LineEdit('999', 200, 20, 'sn', 'Enter the serial number')
-        sn_info_layout = BoxLayout([sn_tb_lbl, self.sn_tb], 'h')
+        sn_info_layout = BoxLayout([self.sn_title_chk, self.sn_tb], 'h')
 
-        ship_tb_lbl = Label('Ship Name:', 80, 20, 'ship_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
+        self.freq_title_chk = CheckBox('Frequency:', False, 'freq_title_chk', title_tip, 100, 20)
+        self.freq_tb = LineEdit('?', 200, 20, 'frequency',
+                                'Nominal frequency from the model. Edit this to replace the frequency in plot titles.')
+        self.freq_tb.setStyleSheet('color: white;')
+        freq_info_layout = BoxLayout([self.freq_title_chk, self.freq_tb], 'h')
+
+        self.ship_title_chk = CheckBox('Ship Name:', False, 'ship_title_chk', title_tip, 100, 20)
         self.ship_tb = LineEdit('?', 200, 20, 'ship', 'Enter the ship name (optional). A magenta ? means it is not set and will be left out of plot titles.')
-        ship_info_layout = BoxLayout([ship_tb_lbl, self.ship_tb], 'h')
+        ship_info_layout = BoxLayout([self.ship_title_chk, self.ship_tb], 'h')
 
-        cruise_tb_lbl = Label('Description:', 80, 20, 'cruise_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
+        self.cruise_title_chk = CheckBox('Description:', False, 'cruise_title_chk', title_tip, 100, 20)
         self.cruise_tb = LineEdit('?', 200, 20, 'cruise_name', 'Enter the description (optional). A magenta ? means it is not set and will be left out of plot titles.')
-        cruise_info_layout = BoxLayout([cruise_tb_lbl, self.cruise_tb], 'h')
+        cruise_info_layout = BoxLayout([self.cruise_title_chk, self.cruise_tb], 'h')
 
-        date_tb_lbl = Label('Date:', 115, 20, 'date_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
+        self.date_title_chk = CheckBox('Date:', True, 'date_title_chk', title_tip, 100, 20)
         self.date_tb = LineEdit('yyyy/mm/dd', 200, 20, 'date', 'Enter the date (BISTs over multiple days will '
                                                               'use dates in files, if available)')
         self.date_tb.setStyleSheet("color: white;")
-        date_info_layout = BoxLayout([date_tb_lbl, self.date_tb], 'h')
+        date_info_layout = BoxLayout([self.date_title_chk, self.date_tb], 'h')
 
         # set the custom info button layout
-        custom_info_layout = BoxLayout([self.sys_info_lbl, model_info_layout, sn_info_layout, ship_info_layout,
-                                        cruise_info_layout, date_info_layout, self.warn_user_chk], 'v')
+        custom_info_layout = BoxLayout([self.sys_info_lbl, model_info_layout, sn_info_layout, freq_info_layout,
+                                        ship_info_layout, cruise_info_layout, date_info_layout, self.warn_user_chk], 'v')
 
         # set the custom info groupbox
         self.custom_info_gb = QtWidgets.QGroupBox('System Information')
@@ -1430,7 +1446,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.type_cbox.setCurrentIndex(combo_index)
         self.type_cbox.blockSignals(False)
         self.update_buttons()
-        self.plot_bist_btn.setStyleSheet(self._export_btn_style_pending)
+        self._set_plot_selected_pending(True)
         self.update_log('BIST type set to ' + self.type_cbox.currentText())
 
     def add_files(self, ftype_filter, input_dir='HOME', include_subdir=False):  # add all files of specified type in dir
@@ -1507,7 +1523,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sn_user_entered = False
             self._model_user_entered = False
             self._date_user_entered = False
+            self._freq_user_entered = False
             self.sn_updated = False
+            self._title_chk_user.difference_update(('model', 'sn', 'date', 'frequency'))
             self._clear_export_button_highlight()
         if added_any:
             self._apply_detected_bist_type()
@@ -1913,6 +1931,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 'ship_name': self._optional_sysinfo_text(self.ship_tb),
                 'description': self._optional_sysinfo_text(self.cruise_tb),
                 'date': self.date_tb.text().strip(),
+                'frequency': self.freq_tb.text().strip(),
+                'show_in_title': {
+                    'model': self.model_title_chk.isChecked(),
+                    'serial_number': self.sn_title_chk.isChecked(),
+                    'frequency': self.freq_title_chk.isChecked(),
+                    'ship_name': self.ship_title_chk.isChecked(),
+                    'description': self.cruise_title_chk.isChecked(),
+                    'date': self.date_title_chk.isChecked(),
+                },
             },
             'plot_parameters': {
                 'test_units': self.prm_unit_cbox.currentText(),
@@ -2197,6 +2224,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if sys_info.get('date') is not None:
             self.date_tb.setText(str(sys_info['date']))
             self.date_updated = True
+        frequency = str(sys_info.get('frequency', '')).strip()
+        if frequency:
+            self._sysinfo_programmatic_update = True
+            self.freq_tb.setText(frequency)
+            self._sysinfo_programmatic_update = False
+            self._freq_user_entered = not self._is_undefined_sysinfo(frequency)
+            self._freq_autofill_text = frequency
+        show = sys_info.get('show_in_title') or {}
+        title_checks = (
+            ('model', self.model_title_chk),
+            ('serial_number', self.sn_title_chk),
+            ('frequency', self.freq_title_chk),
+            ('ship_name', self.ship_title_chk),
+            ('description', self.cruise_title_chk),
+            ('date', self.date_title_chk),
+        )
+        for key, checkbox in title_checks:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(bool(show.get(key, key != 'frequency')))
+            checkbox.blockSignals(False)
+            self._title_chk_user.add(key)
         self.refresh_system_info_from_ui()
 
     def _add_verified_bist_files(self, paths):
@@ -2256,7 +2304,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._clear_export_button_highlight()
 
         if self.filenames == []:  # all files have been removed
-            self.plot_bist_btn.setStyleSheet(self._export_btn_style_default)
+            self._set_plot_selected_pending(False)
             if clear_all:
                 self._clear_shown_plots()
             self.update_log('Cleared all files')
@@ -2267,6 +2315,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sn_user_entered = False
             self._model_user_entered = False
             self._date_user_entered = False
+            self._freq_user_entered = False
+            self._title_chk_user.clear()
+            self._set_title_checkbox(self.model_title_chk, True)
+            self._set_title_checkbox(self.sn_title_chk, True)
+            self._set_title_checkbox(self.freq_title_chk, False)
+            self._set_title_checkbox(self.date_title_chk, True)
+            self._sysinfo_programmatic_update = True
+            self.freq_tb.setText('?')
+            self._sysinfo_programmatic_update = False
+            self.freq_tb.setStyleSheet('color: white;')
+            self._freq_autofill_text = '?'
+            self._set_title_checkbox(self.ship_title_chk, not self._is_undefined_sysinfo(self.ship_tb.text()))
+            self._set_title_checkbox(self.cruise_title_chk, not self._is_undefined_sysinfo(self.cruise_tb.text()))
             self.swell_dir_updated = False
             self.swell_dir_tb.setText(self.swell_dir_default)
             self.swell_dir_message = True
@@ -2447,27 +2508,69 @@ class MainWindow(QtWidgets.QMainWindow):
             self.date_tb.text().strip(),
         )
 
+    def _title_checkboxes(self):
+        """System-information checkboxes that control plot titles."""
+        return {
+            'model': self.model_title_chk,
+            'sn': self.sn_title_chk,
+            'frequency': self.freq_title_chk,
+            'ship_name': self.ship_title_chk,
+            'cruise_name': self.cruise_title_chk,
+            'date': self.date_title_chk,
+        }
+
+    def _set_title_checkbox(self, checkbox, checked):
+        """Set a title checkbox without treating it as a user click."""
+        if checkbox.isChecked() == bool(checked):
+            return
+        checkbox.blockSignals(True)
+        checkbox.setChecked(bool(checked))
+        checkbox.blockSignals(False)
+
+    def _on_title_checkbox_toggled(self, field):
+        """Keep a checkbox the user clicked from being changed by the next file check."""
+        self._title_chk_user.add(field)
+        self._replot_sysinfo_if_shown()
+
+    def _sync_parsed_title_checkboxes(self):
+        """Uncheck model, serial number, and date when files leave them unknown or conflicting."""
+        problems = set(self.missing_fields) | set(self.conflicting_fields)
+        for field in ('model', 'sn', 'date'):
+            if field in self._title_chk_user:
+                continue
+            self._set_title_checkbox(self._title_checkboxes()[field], field not in problems)
+
     def _apply_sn_title_metadata(self, bist):
         """Tell plot titles which system-info fields to show, hide, or replace."""
         if bist is None:
             return
         self.refresh_system_info_from_ui()
-        conflicts = set(getattr(self, 'conflicting_fields', []) or [])
         sn_user = bool(getattr(self, '_sn_user_entered', False))
         model_user = bool(getattr(self, '_model_user_entered', False))
         date_user = bool(getattr(self, '_date_user_entered', False))
         hide = set()
-        if 'model' in conflicts and not model_user:
+        if not self.model_title_chk.isChecked():
             hide.add('model')
-        if 'sn' in conflicts and not sn_user:
+        if not self.sn_title_chk.isChecked():
             hide.add('sn')
-        if 'date' in conflicts and not date_user:
+        if not self.freq_title_chk.isChecked():
+            hide.add('frequency')
+        if not self.ship_title_chk.isChecked():
+            hide.add('ship_name')
+        if not self.cruise_title_chk.isChecked():
+            hide.add('cruise_name')
+        if not self.date_title_chk.isChecked():
             hide.add('date')
         if sn_user and not self.sn_tb.text().strip():
             hide.add('sn')
         if date_user and not read_bist.defined_date_text(self.date_tb.text()):
             hide.add('date')
+        freq_user = bool(getattr(self, '_freq_user_entered', False))
+        if freq_user and self._is_undefined_sysinfo(self.freq_tb.text()):
+            hide.add('frequency')
         bist['title_hide'] = hide
+        bist['frequency_user_entered'] = freq_user
+        bist['frequency_user_value'] = self.freq_tb.text().strip()
         bist['sn_user_entered'] = sn_user
         bist['sn_user_value'] = self.sn_tb.text().strip()
         bist['model_user_entered'] = model_user
@@ -2503,7 +2606,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Refresh stored system info; mark the edited field cyan when user commits a value."""
         self.refresh_system_info_from_ui()
         sender = self.sender()
-        sys_info_widgets = (self.model_cbox, self.sn_tb, self.ship_tb, self.cruise_tb, self.date_tb)
+        sys_info_widgets = (self.model_cbox, self.sn_tb, self.freq_tb, self.ship_tb, self.cruise_tb, self.date_tb)
         if sender not in sys_info_widgets:
             return
 
@@ -2522,6 +2625,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._model_user_entered = True
         elif field_name == 'date':
             self._date_user_entered = True
+        elif field_name == 'frequency':
+            self._freq_user_entered = True
+        checkbox = self._title_checkboxes().get(field_name)
+        if checkbox is not None:
+            self._title_chk_user.add(field_name)
+            self._set_title_checkbox(checkbox, True)
         if field_name in self.conflicting_fields:
             self.conflicting_fields.remove(field_name)
             self.update_sys_info_colors()
@@ -2536,8 +2645,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sysinfo_replot_active = False
 
     def _on_optional_sysinfo_edited(self, field):
-        """Leave ship name and description out of titles when the user clears them."""
+        """Show ship name or description in titles after the user enters one."""
         self._finalize_optional_sysinfo(field)
+        key = 'ship_name' if field is self.ship_tb else 'cruise_name'
+        known = not self._is_undefined_sysinfo(field.text())
+        if known:
+            self._title_chk_user.add(key)
+        else:
+            self._title_chk_user.discard(key)
+        self._set_title_checkbox(self._title_checkboxes()[key], known)
         if field.hasFocus():
             return
         self._replot_sysinfo_if_shown()
@@ -2568,6 +2684,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.update_system_info()
         self._replot_sysinfo_if_shown()
 
+    def _on_freq_user_edited(self):
+        """Use a frequency the user typed in plot titles."""
+        if getattr(self, '_sysinfo_programmatic_update', False):
+            return
+        if self.freq_tb.text().strip() == getattr(self, '_freq_autofill_text', None):
+            return
+        self._mark_sysinfo_user_edit('frequency')
+        if self.freq_tb.hasFocus():
+            return
+        self.update_system_info()
+        self._replot_sysinfo_if_shown()
+
     def on_system_info_committed(self):
         """Apply system info after Enter or model selection; replot if plots are already shown."""
         sender = self.sender()
@@ -2577,6 +2705,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._mark_sysinfo_user_edit('model')
         elif sender == self.date_tb and self.date_tb.text().strip() != getattr(self, '_date_autofill_text', None):
             self._mark_sysinfo_user_edit('date')
+        elif sender == self.freq_tb and self.freq_tb.text().strip() != getattr(self, '_freq_autofill_text', None):
+            self._mark_sysinfo_user_edit('frequency')
         self.update_system_info()
         self._replot_sysinfo_if_shown()
 
@@ -2599,28 +2729,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_system_info_from_ui()
         self.auto_update_plot()
     
+    def _set_plot_selected_pending(self, pending):
+        """Bold orange Plot Selected when a new BIST type or plot style is ready to plot."""
+        style = self._export_btn_style_pending if pending else self._export_btn_style_default
+        self.plot_bist_btn.setStyleSheet(style)
+
     def auto_plot_bist_type(self, _index=None):
-        """Plot when the user changes BIST type and a loaded file contains that type."""
+        """Highlight Plot Selected when the user changes BIST type and a loaded file contains that type."""
         if self.file_list.count() == 0:
+            self._set_plot_selected_pending(False)
             return
         bist_type = self.type_cbox.currentText()
         if len(self.file_list.selectedItems()) == 0:
+            self._set_plot_selected_pending(False)
             self.update_log('No ' + bist_type + ' data in the loaded files')
             QtWidgets.QMessageBox.warning(
                 self, 'BIST type',
                 'None of the loaded files contain ' + bist_type + ' data.')
             return
-        self.update_log('Auto-plotting ' + bist_type)
-        self.plot_bist()
+        self._set_plot_selected_pending(True)
+        self.update_log(bist_type + ' files are ready to plot')
 
     def auto_plot_noise_type(self):
-        """Plot when the user changes Plot Style and files of this BIST type are selected."""
+        """Highlight Plot Selected when the user changes Plot Style and files of this BIST type are selected."""
         if self.file_list.count() == 0 or len(self.file_list.selectedItems()) == 0:
+            self._set_plot_selected_pending(False)
             return
         if not self.noise_test_type_cbox.currentText():
+            self._set_plot_selected_pending(False)
             return
-        self.update_log('Auto-plotting ' + self.noise_test_type_cbox.currentText())
-        self.plot_bist()
+        self._set_plot_selected_pending(True)
+        self.update_log(self.noise_test_type_cbox.currentText() + ' is ready to plot')
 
     def _on_colormap_changed(self, _text=None):
         """Redraw the current RX noise heatmap with the colormap just selected."""
@@ -2825,6 +2964,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._sn_user_entered:
             self.sn_updated = False
         self.date_updated = False
+        if not self._freq_user_entered:
+            self.freq_updated = False
 
         fnames_sel = [self.file_list.item(f).data(1) for f in range(self.file_list.count())
                       if self.file_list.item(f).isSelected()]
@@ -2915,8 +3056,27 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log('***WARNING: New date (' + sys_info['date'] + ') detected in ' + fname_str)
                     self.conflicting_fields.append('date')
 
+            if sys_info['model'] and not self._freq_user_entered:
+                freq_model = sys_info['model']
+                if freq_model in ['2040', '2045', '2040P']:
+                    freq_model = '2040'
+                freq_label = read_bist.get_freq(str(freq_model))
+                if not self.freq_updated:
+                    if self.freq_tb.text().strip() != freq_label:
+                        self._sysinfo_programmatic_update = True
+                        self.freq_tb.setText(freq_label)
+                        self._sysinfo_programmatic_update = False
+                        self.update_log('Updated frequency to ' + freq_label + ' (first frequency found)')
+                    self._freq_autofill_text = self.freq_tb.text().strip()
+                    self.freq_updated = True
+                elif freq_label != self.freq_tb.text().strip():
+                    self.update_log('***WARNING: New frequency (' + freq_label + ') detected in ' + fname_str)
+                    self.conflicting_fields.append('frequency')
+
             # store missing fields, reduce to set after looping through files and disable/enable plot button
             self.missing_fields.extend([k for k in ['model', 'sn', 'date'] if not sys_info[k]])
+            if not sys_info['model']:
+                self.missing_fields.append('frequency')
             # print('self.missing fields =', self.missing_fields)
             # print('self.conflicting fields =', self.conflicting_fields)
 
@@ -2930,12 +3090,16 @@ class MainWindow(QtWidgets.QMainWindow):
             confirmed.add('sn')
         if self._date_user_entered:
             confirmed.add('date')
+        if self._freq_user_entered:
+            confirmed.add('frequency')
         if confirmed:
             self.missing_fields = [k for k in self.missing_fields if k not in confirmed]
             self.conflicting_fields = [k for k in self.conflicting_fields if k not in confirmed]
 
         # if self.missing_fields or self.conflicting_fields:
         self.update_sys_info_colors()
+        if fnames_sel:
+            self._sync_parsed_title_checkboxes()
         if warn and any(self.missing_fields or self.conflicting_fields):
             user_warning = QtWidgets.QMessageBox.question(self, 'System info check',
                 'Red field(s) are either:\n\n' +
@@ -2954,7 +3118,9 @@ class MainWindow(QtWidgets.QMainWindow):
             confirmed.add('sn')
         if self._date_user_entered:
             confirmed.add('date')
-        for widget in [self.model_cbox, self.sn_tb, self.date_tb]:  # set text to red for all missing fields
+        if self._freq_user_entered:
+            confirmed.add('frequency')
+        for widget in [self.model_cbox, self.sn_tb, self.freq_tb, self.date_tb]:  # set text to red for all missing fields
             widget.setStyleSheet('color: cyan')  # reset field to cyan before checking missing/conflicting fields
             if widget.objectName() in confirmed:
                 continue
@@ -2966,7 +3132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bist_test_type = self.type_cbox.currentText()
         self.update_log('Plotting selected ' + bist_test_type + ' BIST files')
         self.get_current_file_list()
-        self.plot_bist_btn.setStyleSheet('')
+        self._set_plot_selected_pending(False)
         self.refresh_system_info_from_ui()
         
         # Clear previous navigation state
@@ -4982,7 +5148,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 im = ax.imshow(tx_data, cmap=tx_cmap, vmin=zmin, vmax=zmax)
                 fig._bist_tx_hover = (ax, im, tx_data)
                 cbar = fig.colorbar(im, orientation='vertical', extend=tx_extend)
-                cbar.set_label(r'Impedance ($\Omega$, f=' + str(bist['frequency'][file_index][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
+                cbar.set_label(r'Impedance ($\Omega$, f=' + read_bist.tx_frequency_text(bist, file_index=file_index) + ' kHz)', fontsize=cbar_fontsize)
 
                 # Set ticks and labels
                 dy_tick = 5
@@ -5078,7 +5244,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 # Set axis labels
                 ax1.set_xlabel('TX Channel (index starts at 0)', fontsize=axfsize)
-                ax1.set_ylabel(r'Impedance ($\Omega$, f=' + str(bist['frequency'][file_index][0, 0]) + ' kHz)', fontsize=axfsize)
+                ax1.set_ylabel(r'Impedance ($\Omega$, f=' + read_bist.tx_frequency_text(bist, file_index=file_index) + ' kHz)', fontsize=axfsize)
                 ax1.xaxis.set_label_position('top')
                 ax2.set_ylabel('TX Slot (index starts at 1)', fontsize=axfsize)
                 ax2.set_xlabel('TX Channel (index starts at 0)', fontsize=axfsize)
@@ -5086,7 +5252,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 # Add colorbar
                 cbar = fig.colorbar(im, orientation='horizontal', fraction=0.05, pad=0.05, extend=tx_extend)
-                cbar.set_label(r'Impedance ($\Omega$, f=' + str(bist['frequency'][file_index][0, 0]) + ' kHz)', fontsize=cbar_fontsize)
+                cbar.set_label(r'Impedance ($\Omega$, f=' + read_bist.tx_frequency_text(bist, file_index=file_index) + ' kHz)', fontsize=cbar_fontsize)
 
                 # Set the super title
                 title_str = 'TX Channels BIST\n' + read_bist.tx_channels_id_line(bist, file_index=file_index) + '\n' + \
