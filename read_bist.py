@@ -965,8 +965,8 @@ def plot_rx_z(z, save_figs=True, output_dir=os.getcwd(), return_fig=False, gui_m
                     print('in plotter, z[test_datetime][i][t] =', z['test_datetime'][i][t])
 
                     test_time_str = datetime.datetime.strftime(z['test_datetime'][i][t], '%Y/%m/%d %H:%M:%S.%f')[:-3]  # keep ms
-                    title_str = 'RX Channels BIST\n' + em_model_id_for_title(z, file_index=i) + '\n' + \
-                                test_time_str + '\nFrequency: ' + freq_str
+                    title_str = channels_plot_title(
+                        'RX Channels BIST', z, file_index=i, freq_text=freq_str)
                     # title_str = 'RX Channels BIST\n' + 'EM' + z['model'][i] + ' (S/N ' + z['sn'][i] + ')\n' + \
                     #             z['date'][i] + ' ' + z['time'][i] + '\nFrequency: ' + freq_str
 
@@ -1083,11 +1083,8 @@ def plot_rx_z_line_heatmap(z, save_figs=True, output_dir=os.getcwd(), return_fig
                     z['test_datetime'][i][t], '%Y/%m/%d %H:%M:%S.%f'
                 )[:-3]
 
-                title_str = (
-                    'RX Channels BIST\n'
-                    + em_model_id_for_title(z, file_index=i) + '\n'
-                    + test_time_str + '\nFrequency: ' + freq_str
-                )
+                title_str = channels_plot_title(
+                    'RX Channels BIST', z, file_index=i, freq_text=freq_str)
 
                 if is_2040:
                     value_label = r'Signal Amplitude [dB], f=' + freq_val + ' kHz'
@@ -1524,11 +1521,8 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
         freq_str = f_set[f].replace('.0','') + ' kHz'
         freq_str = freq_str.replace('(High) kHz', 'kHz (High)').replace('(Low) kHz', 'kHz (Low)')  # SIS 5 EM2040
 
-        title_str = 'RX Channels BIST\n' + em_model_id_for_title(z) + '\n' + \
-                    years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')\n' + \
-                    'Frequency: ' + freq_str
-                    # 'Frequency: ' + f_set[f] + ' kHz'
-                    # 'Frequency: '+z['freq_range'][i][f]+' kHz'
+        years_detail = years_str + ' (' + str(bist_count) + ' BIST' + ('s' if bist_count > 1 else '') + ')'
+        title_str = channels_plot_title('RX Channels BIST', z, detail=years_detail, freq_text=freq_str)
         t1 = fig.suptitle(title_str, fontsize=suptitle_fontsize)
         fig.set_size_inches(10, 14)
 
@@ -3661,17 +3655,33 @@ def plot_title_date_suffix(z, raw_date=None):
     return f' - {text}' if text else ''
 
 
-def tx_channels_detail_line(detail, z, file_index=None):
-    """Third TX title line: [Freq: N kHz - ][date - ]filename.
+def _freq_title_part(freq_text):
+    """'Freq: ...' for a title, or '' when no frequency is available."""
+    shown = '' if freq_text is None else str(freq_text).strip()
+    if not shown:
+        return ''
+    if shown.lower().startswith('freq:'):
+        return shown
+    return f'Freq: {shown}'
+
+
+def tx_channels_detail_line(detail, z, file_index=None, freq_text=None):
+    """Third title line: [Freq: N kHz - ][date - ]filename.
 
     Frequency and date are omitted when they cannot be determined.
+    freq_text overrides the frequency read from the file. Include units in
+    freq_text when it is not a bare number (for example '200 kHz (High)').
     """
-    freq = tx_frequency_text(z, file_index=file_index)
+    if freq_text is None:
+        freq = tx_frequency_text(z, file_index=file_index)
+        freq_part = f'Freq: {freq} kHz' if freq else ''
+    else:
+        freq_part = _freq_title_part(freq_text)
     file_name = tx_bist_filename(z, file_index)
     if file_index is not None:
         parts = []
-        if freq:
-            parts.append(f'Freq: {freq} kHz')
+        if freq_part:
+            parts.append(freq_part)
         date_text = tx_plot_date_text(z, file_index)
         if date_text:
             parts.append(date_text)
@@ -3680,9 +3690,20 @@ def tx_channels_detail_line(detail, z, file_index=None):
         if parts:
             return ' - '.join(parts)
         return detail
-    if freq:
-        return f'Freq: {freq} kHz - {detail}'
+    if freq_part:
+        return f'{freq_part} - {detail}'
     return detail
+
+
+def channels_plot_title(test_label, z, file_index=None, detail='', freq_text=None):
+    """Title lines shared by TX and RX channel plots.
+
+    Line 1 is the test type. Line 2 is ship, model, serial number, and
+    description. Line 3 is frequency, date, and the BIST filename.
+    """
+    return (test_label + '\n' +
+            tx_channels_id_line(z, file_index=file_index) + '\n' +
+            tx_channels_detail_line(detail, z, file_index=file_index, freq_text=freq_text))
 
 
 def binned_date_title(date):
