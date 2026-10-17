@@ -319,9 +319,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # set up BIST selection and plotting actions
         self.select_type_btn.clicked.connect(self.select_bist)
         self.clear_type_btn.clicked.connect(self.clear_bist)
-        self.save_session_btn.clicked.connect(self.save_session)
-        self.load_session_btn.clicked.connect(self.load_session)
-        self.restore_defaults_btn.clicked.connect(self.restore_defaults)
         # self.verify_bist_btn.clicked.connect(self.verify_system_info)
         self.plot_bist_btn.clicked.connect(self.plot_bist)
         # self.custom_info_chk.stateChanged(self.custom_info_gb.setEnabled(self.custom_info_chk.isChecked()))
@@ -647,9 +644,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.select_type_btn = PushButton('Select BISTs', btnw, btnh, 'select_type',
                                           'Filter and select source files by the chosen BIST type')
         self.clear_type_btn = PushButton('Clear Selected', btnw, btnh, 'clear_type', 'Clear file selection')
-        self.save_session_btn = PushButton('Save Session', btnw, btnh, 'save_session', 'Save current session data (Serial Number, Ship Name, Description, X-Axis Limits, Y-Axis Range)')
-        self.load_session_btn = PushButton('Load Session', btnw, btnh, 'load_session', 'Load previously saved session data')
-        self.restore_defaults_btn = PushButton('Restore Defaults', btnw, btnh, 'restore_defaults', 'Restore all fields to default values')
         self.plot_bist_btn = PushButton('Plot Selected', btnw, btnh, 'plot_bist',
                                         'Plot selected, verified files (using current system information above, '
                                         'if not available in BIST)')
@@ -1003,7 +997,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.log_gb.setMinimumWidth(0)
         self.log_gb.setFixedWidth(315)
-        self.log_gb.setMaximumHeight(200)
+        self.log_gb.setMinimumHeight(260)
+        self.log_gb.setMaximumHeight(260)
         left_column.addWidget(self.log_gb)
         left_column.addStretch(1)
 
@@ -1086,17 +1081,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.noise_test_gb.setFixedWidth(320)
         right_column.addWidget(self.noise_test_gb)
-
-        session_gb = QtWidgets.QGroupBox('Plot Session Control')
-        session_layout = QtWidgets.QVBoxLayout()
-        save_load_layout = BoxLayout([self.save_session_btn, self.load_session_btn], 'h', equal_width=True)
-        session_layout.addLayout(save_load_layout)
-        set_equal_horizontal_width(self.restore_defaults_btn)
-        session_layout.addWidget(self.restore_defaults_btn)
-        session_gb.setLayout(session_layout)
-        session_gb.setFixedWidth(320)
-        session_gb.setMaximumHeight(100)
-        right_column.addWidget(session_gb)
         right_column.addStretch(1)
 
         right_widget = QtWidgets.QWidget()
@@ -2033,114 +2017,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.get_current_file_list()
         self.current_fnum_lbl.setText('Current file count: ' + str(len(self.filenames)))
         return failed
-
-    def save_session(self):  # save current session data to file
-        try:
-            session_data = {
-                'serial_number': self.sn_tb.text(),
-                'ship_name': self._optional_sysinfo_text(self.ship_tb),
-                'description': self._optional_sysinfo_text(self.cruise_tb),
-                'x_axis_min': self.prm_min_tb.text(),
-                'x_axis_max': self.prm_max_tb.text(),
-                'y_axis_min': self.binned_rxnoise_min_tb.text(),
-                'y_axis_max': self.binned_rxnoise_max_tb.text(),
-                'x_axis_enabled': self.prm_plot_lim_gb.isChecked()
-            }
-            
-            # Debug: Print what we're saving
-            self.update_log(f'Debug: Saving X-axis limits: min={session_data["x_axis_min"]}, max={session_data["x_axis_max"]}, enabled={session_data["x_axis_enabled"]}')
-            
-            # Save to session config file
-            config = load_bist_session_config()
-            self.update_log(f'Debug: Current config before update: {config}')
-            config.update(session_data)
-            self.update_log(f'Debug: Config after update: {config}')
-            save_bist_session_config(config)
-            self.update_log(f'Debug: Session config saved to file')
-            
-            self.update_log('Session data saved successfully')
-        except Exception as e:
-            self.update_log(f'Error saving session: {str(e)}')
-
-    def restore_defaults(self):  # restore all fields to default values
-        try:
-            # Clear text fields
-            self.sn_tb.clear()
-            self.ship_tb.clear()
-            self.cruise_tb.clear()
-            self.prm_min_tb.clear()
-            self.prm_max_tb.clear()
-            self.binned_rxnoise_min_tb.clear()
-            self.binned_rxnoise_max_tb.clear()
-            
-            # Reset to default values
-            self.sn_tb.setText('')
-            self._set_optional_sysinfo_undefined(self.ship_tb)
-            self._set_optional_sysinfo_undefined(self.cruise_tb)
-            self.prm_min_tb.setText('')
-            self.prm_max_tb.setText('')
-            self.binned_rxnoise_min_tb.setText('')
-            self.binned_rxnoise_max_tb.setText('')
-            self.prm_plot_lim_gb.setChecked(False)  # Reset checkbox to unchecked
-            
-            self.update_log('All fields restored to default values')
-        except Exception as e:
-            self.update_log(f'Error restoring defaults: {str(e)}')
-
-    def load_session(self):  # load saved session data when user clicks Load Session button
-        try:
-            self.load_session_data()
-            self.update_log('Session data loaded successfully')
-        except Exception as e:
-            self.update_log(f'Error loading session: {str(e)}')
-
-    def load_session_data(self):  # load saved session data from file
-        try:
-            had_plots = bool(getattr(self, 'all_figures', None) and len(self.all_figures) > 0)
-            sys_info_before = self._system_info_snapshot() if had_plots else None
-
-            config = load_bist_session_config()
-            
-            # Debug: Print what we're loading
-            self.update_log(f'Debug: Loading session config: {config}')
-            
-            # Load saved values if they exist (these will be used as fallbacks)
-            if 'serial_number' in config and config['serial_number']:
-                self._sn_programmatic_update = True
-                self.sn_tb.setText(config['serial_number'])
-                self._sn_programmatic_update = False
-            if 'ship_name' in config and not self._is_undefined_sysinfo(config['ship_name']):
-                self.ship_tb.setText(config['ship_name'])
-                self.ship_tb.setStyleSheet('color: cyan;')
-            else:
-                self._set_optional_sysinfo_undefined(self.ship_tb)
-            if 'description' in config and not self._is_undefined_sysinfo(config['description']):
-                self.cruise_tb.setText(config['description'])
-                self.cruise_tb.setStyleSheet('color: cyan;')
-            else:
-                self._set_optional_sysinfo_undefined(self.cruise_tb)
-            if 'x_axis_min' in config and config['x_axis_min']:
-                self.update_log(f'Debug: Setting X-axis min to: {config["x_axis_min"]}')
-                self.prm_min_tb.setText(config['x_axis_min'])
-            if 'x_axis_max' in config and config['x_axis_max']:
-                self.update_log(f'Debug: Setting X-axis max to: {config["x_axis_max"]}')
-                self.prm_max_tb.setText(config['x_axis_max'])
-            if 'y_axis_min' in config and config['y_axis_min']:
-                self.binned_rxnoise_min_tb.setText(config['y_axis_min'])
-            if 'y_axis_max' in config and config['y_axis_max']:
-                self.binned_rxnoise_max_tb.setText(config['y_axis_max'])
-            if 'x_axis_enabled' in config:
-                self.prm_plot_lim_gb.setChecked(config['x_axis_enabled'])
-                self.update_log(f'Debug: Setting X-axis checkbox to: {config["x_axis_enabled"]}')
-
-            self.refresh_system_info_from_ui()
-            if had_plots and self._system_info_snapshot() != sys_info_before:
-                self.update_log('System information changed; updating displayed plots...')
-                self.auto_update_plots_for_system_info()
-
-            self.update_log('Session data loaded successfully')
-        except Exception as e:
-            self.update_log(f'Error loading session data: {str(e)}')
 
     # def remove_files(self, clear_all=False):  # remove selected files
     #     self.get_current_file_list()
