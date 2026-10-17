@@ -22,8 +22,12 @@ The application provides an intuitive GUI for:
 - **About view on startup** – The Plot Window shows program info (logo, version, freeze date, developers, NSF support) until data is plotted
 - **Resizable window** – Only the middle Plot Window grows or shrinks; left and right columns stay fixed width and scroll when needed
 - **Dark theme** – GUI uses a dark theme regardless of system settings (plot area keeps default white background)
-- **RX Noise plot types** – vs. Speed (heatmap), 1 kt / 2 kt binned, vs. RPM, vs. Pitch (deg/%), binned RPM/Pitch, and vs. Azimuth; sort order and Ignore SiS5 Speeds options where applicable
-- **RX Noise vs Speed** – Values outside the 30–70 dB colorbar range are shown in black (below 30 dB) or magenta (above 70 dB), with console warnings when data exceeds the range
+- **Plot Style** – The pulldown follows the BIST type. RX Noise keeps its modes (vs. Speed, 1 kt / 2 kt binned, vs. RPM, vs. Pitch in deg or %, binned RPM/Pitch, and vs. Azimuth), plus sort order and Ignore SIS5 Speeds where those apply. TX Channels and RX Channels offer **Plot All** (the usual charts plus history) and **History** (history only). Switching to TX or RX Channels starts on Plot All; returning to RX Noise restores the previous noise mode
+- **RX noise range** – Checked by default (30–70 dB). Sets the Y axis on binned line plots and the color ramp on RX noise heatmaps. Values below Min are black and values above Max are magenta. Unchecked, the line-plot axis and both heatmap color ranges follow the data being plotted
+- **Binned calculated mean** – Checked by default. Choose **Arithmetic & Linear Mean** (default), **Arithmetic Mean**, or **Linear Mean**. The arithmetic mean averages the dB values. The linear mean averages amplitudes and converts the result back to dB. Choosing a mean sets the error-bar type to the matching standard deviation (linear standard deviation when both means are shown). The error-bar type can then be changed on its own
+- **Binned plot error bars** – **Standard Deviation Linear** (default), **Standard Error Linear**, **Standard Deviation Arithmetic**, and **Standard Error Arithmetic**. Linear bars sit on the blue linear mean. Arithmetic bars sit on the green arithmetic mean. Standard error divides the spread by the square root of the number of tests in the bin
+- **RX Noise Filtering** – **Transient Filter** is off by default (threshold 70 dB). A test is a bad transient when the power-mean level of its modules is above that threshold; each frequency is judged separately. Flagged tests produce a Raw chart and a Filtered chart. If none are flagged, only the usual chart is shown. **Remove Null Values** is on by default and blanks module readings at or below 0 dB on both Raw and Filtered charts. It does not create an extra chart
+- **System information on titles** – A model, serial number, or date that conflicts across the loaded files is left off plot titles until that field is edited. A field the user clears is omitted, with no fallback to the parsed value. A confirmed serial number stays confirmed on later plots, including filtered charts
 - **Colormaps** – Jet, Inferno, Hot, RedBlue, CoolWarm, and Reversed Managua. Inferno and Hot use custom ranges (bottom at step 40 and 24 respectively). RedBlue, CoolWarm, and Reversed Managua support a configurable **Center** (inflection point in dB, default 55)
 - **TX/RX channel out-of-range coloring** – TX and RX channel heatmaps indicate values outside the colorbar range using black (below min) and magenta (above max), including colorbar extend indicators; per-frequency impedance limits from SIS 5 files (e.g. EM712) are applied when regenerating GUI plots
 - **Heatmap hover tooltips** – GUI tooltips (upper-left corner) show per-cell values:
@@ -84,9 +88,9 @@ Pre-built executables are available in the [Releases](https://github.com/seamapp
 2. **Load Files**: Click "Add Files" to select one or more BIST text files
 3. **Enter System Information**: Provide the multibeam model, serial number, and test date (or allow values parsed from the files)
 4. **Configure Parameters**: Adjust any custom parameters as needed (for RX Noise, set plot type, units, colormap, sort order, etc.)
-5. **Plot**: Click "Plot BIST" to generate visualizations in the Plot Window
-6. **Navigate**: Use Previous / Next to browse multiple charts (frequencies or plot styles)
-7. **Export**: Use **Export Plot(s)** to save figures to a chosen directory at the standard export sizes (not the on-screen window size)
+5. **Plot**: Click **Plot Selected** to generate visualizations in the Plot Window
+6. **Navigate**: Use Previous / Next to browse multiple charts (frequencies, Raw/Filtered pairs, or plot styles)
+7. **Export**: Use **Export Plots** to save figures at the standard export sizes (not the on-screen window size). TX channel PNG names are `TX_Z_EM<model>_SN_<sn>_<filename>_v<style>.png`. Use **Export Analysis** to save the loaded files and plot settings to JSON, and **Import Analysis** to restore them and replot. **Remove All Files** clears the file list and the plots, and returns the Plot Window to the startup credit page
 
 ### Input File Formats
 
@@ -96,7 +100,7 @@ Pre-built executables are available in the [Releases](https://github.com/seamapp
 
 ### Tips
 
-- For RX Noise analysis, collect 10-20 BISTs per condition (e.g., per speed) to reduce the impact of transient noises
+- For RX Noise analysis, collect 10-20 BISTs per condition (e.g., per speed) to reduce the impact of transient noises. The Transient Filter can drop tests whose module average is above the dB threshold, and Remove Null Values blanks readings at or below 0 dB
 - Save one text file per condition (e.g., one file per vessel speed) for organized analysis
 - Factory limits for acceptable BIST levels are automatically parsed from the text file when available (including per-frequency RX limits on multi-frequency SIS 5 systems)
 - For **SIS 5 TX Channels** combined files, impedance may appear in multiple blocks (separate slot-index header rows per group of slots); the plotter merges them into one heatmap
@@ -133,7 +137,7 @@ SIS 5 model parsing extracts model numbers (e.g. EM2040, EM304, EM712) from the 
 
 ## Version
 
-Current version: **2026.15** (see `version.py`)
+Current version: **2026.19** (see `version.py`)
 
 ## Authors
 

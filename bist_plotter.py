@@ -358,6 +358,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.prm_str_tb.textChanged.connect(self.update_noise_param_string)
         
         # Connect RX Noise Testing controls for auto-update
+        self.binned_calculated_mean_cb.currentTextChanged.connect(self._on_calculated_mean_changed)
+        self.binned_calculated_mean_gb.toggled.connect(self.auto_update_plot)
         self.binned_error_type_cb.currentTextChanged.connect(self.auto_update_plot)
         self.binned_individual_cb.currentTextChanged.connect(self.auto_update_plot)
         
@@ -536,12 +538,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sys_info_lbl.setStyleSheet('font: 8pt')
         model_tb_lbl = Label('Model:', 80, 20, 'model_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
         self.model_cbox = ComboBox(['EM 2040', 'EM 2042', 'EM 302', 'EM 304', 'EM 710', 'EM 712', 'EM 122', 'EM 124'],
-                                   200, 20, 'model', 'Select the EM model (required)')
+                                   200, 20, 'model', 'Select the EM model')
         self.model_cbox.setStyleSheet("color: white;")
         model_info_layout = BoxLayout([model_tb_lbl, self.model_cbox], 'h')
 
         sn_tb_lbl = Label('Serial No.:', 80, 20, 'sn_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
-        self.sn_tb = LineEdit('999', 200, 20, 'sn', 'Enter the serial number (required)')
+        self.sn_tb = LineEdit('999', 200, 20, 'sn', 'Enter the serial number')
         sn_info_layout = BoxLayout([sn_tb_lbl, self.sn_tb], 'h')
 
         ship_tb_lbl = Label('Ship Name:', 80, 20, 'ship_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
@@ -553,7 +555,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cruise_info_layout = BoxLayout([cruise_tb_lbl, self.cruise_tb], 'h')
 
         date_tb_lbl = Label('Date:', 115, 20, 'date_tb_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
-        self.date_tb = LineEdit('yyyy/mm/dd', 200, 20, 'date', 'Enter the date (required; BISTs over multiple days will '
+        self.date_tb = LineEdit('yyyy/mm/dd', 200, 20, 'date', 'Enter the date (BISTs over multiple days will '
                                                               'use dates in files, if available)')
         self.date_tb.setStyleSheet("color: white;")
         date_info_layout = BoxLayout([date_tb_lbl, self.date_tb], 'h')
@@ -704,17 +706,38 @@ class MainWindow(QtWidgets.QMainWindow):
         binned_rxnoise_range_gb_layout = BoxLayout([binned_rxnoise_range_layout], 'v', full_width=True)
         self.binned_rxnoise_range_gb = GroupBox('RX noise range (db)', binned_rxnoise_range_gb_layout, 
                                                 True, True, 'binned_rxnoise_range_gb')
-        self.binned_rxnoise_range_gb.setToolTip('RX noise range in dB. Sets the Y-axis on binned plots and the color ramp on RX noise heatmaps.\n'
-                                                'Values below Min are black and values above Max are magenta.')
+        self.binned_rxnoise_range_gb.setToolTip('RX noise range in dB (default 30-70 dB). Sets the Y-axis on binned plots and the color ramp on RX noise heatmaps.\n'
+                                                'Values below Min are black and values above Max are magenta.\n'
+                                                'When unchecked, the axis and color range follow the plotted data.')
         
         # Initially enable the Min/Max text boxes since group box is checked by default
         self.binned_rxnoise_min_tb.setEnabled(True)
         self.binned_rxnoise_max_tb.setEnabled(True)
 
+        # set binned calculated-mean controls
+        binned_calculated_mean_lbl = Label('Mean:', 50, 20, 'binned_calculated_mean_lbl',
+                                           (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
+        self.binned_calculated_mean_cb = ComboBox(
+            ['Arithmetic & Linear Mean', 'Arithmetic Mean', 'Linear Mean'],
+            210, 20, 'binned_calculated_mean_cb',
+            'Arithmetic mean averages the dB values. Linear mean averages in linear units, then converts back to dB.')
+        binned_calculated_mean_layout = BoxLayout(
+            [binned_calculated_mean_lbl, self.binned_calculated_mean_cb], 'h', full_width=True)
+        binned_calculated_mean_gb_layout = BoxLayout([binned_calculated_mean_layout], 'v', full_width=True)
+        self.binned_calculated_mean_gb = GroupBox(
+            'Binned calculated mean', binned_calculated_mean_gb_layout,
+            True, True, 'binned_calculated_mean_gb')
+        self.binned_calculated_mean_gb.setToolTip(
+            'Choose which calculated means are drawn on binned RX noise plots')
+
         # set binned RX noise error bar type controls
         binned_error_type_lbl = Label('Error bar type:', 80, 20, 'binned_error_type_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
-        self.binned_error_type_cb = ComboBox(['Standard Deviation', 'Standard Error'], 120, 20, 'binned_error_type_cb')
-        self.binned_error_type_cb.setToolTip('Choose between standard deviation or standard error for the linear mean error bars')
+        self.binned_error_type_cb = ComboBox(
+            ['Standard Deviation Linear', 'Standard Error Linear',
+             'Standard Deviation Arithmetic', 'Standard Error Arithmetic'],
+            210, 20, 'binned_error_type_cb',
+            'Linear bars are the spread of the linear mean. Arithmetic bars are the spread of the dB values around the arithmetic mean. Standard error divides that spread by the square root of the number of tests.')
+        self.binned_error_type_cb.setCurrentIndex(0)
         binned_error_type_layout = BoxLayout([binned_error_type_lbl, self.binned_error_type_cb], 'h',
                                              full_width=True)
         
@@ -722,7 +745,7 @@ class MainWindow(QtWidgets.QMainWindow):
         binned_error_type_gb_layout = BoxLayout([binned_error_type_layout], 'v', full_width=True)
         self.binned_error_type_gb = GroupBox('Binned plot error bars', binned_error_type_gb_layout, 
                                             True, True, 'binned_error_type_gb')
-        self.binned_error_type_gb.setToolTip('Control the type of error bars displayed on 1kt and 2kt binned RX noise plots')
+        self.binned_error_type_gb.setToolTip('Choose standard deviation or standard error for the linear mean or the arithmetic mean on binned RX noise plots')
 
         # set binned individual measurements display controls
         binned_individual_lbl = Label('Individual points:', 100, 20, 'binned_individual_lbl', (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
@@ -879,7 +902,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # param_layout = BoxLayout([prm_unit_layout, self.parse_test_params_gb, self.custom_param_gb], 'v')
         # param_layout = BoxLayout([prm_unit_layout, self.parse_test_params_gb, self.custom_param_gb], 'v')
         param_layout = BoxLayout([prm_unit_layout, self.prm_plot_lim_gb, self.binned_rxnoise_range_gb,
-                                  self.binned_error_type_gb, self.binned_individual_gb, self.parse_test_params_gb,
+                                  self.binned_calculated_mean_gb, self.binned_error_type_gb,
+                                  self.binned_individual_gb, self.parse_test_params_gb,
                                   self.plotting_test_params_gb, self.custom_param_gb], 'v', full_width=True)
 
 
@@ -1352,6 +1376,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.binned_rxnoise_min_tb.setEnabled(is_checked)
         self.binned_rxnoise_max_tb.setEnabled(is_checked)
 
+    def _on_calculated_mean_changed(self, mean_text):
+        """Match the error-bar type to the mean the user just selected."""
+        error_for_mean = {
+            'Linear Mean': 'Standard Deviation Linear',
+            'Arithmetic Mean': 'Standard Deviation Arithmetic',
+            'Arithmetic & Linear Mean': 'Standard Deviation Linear',
+        }
+        error_text = error_for_mean.get(mean_text)
+        if error_text:
+            index = self.binned_error_type_cb.findText(error_text)
+            if index >= 0 and index != self.binned_error_type_cb.currentIndex():
+                self.binned_error_type_cb.blockSignals(True)
+                self.binned_error_type_cb.setCurrentIndex(index)
+                self.binned_error_type_cb.blockSignals(False)
+        self.auto_update_plot()
+
+    def _binned_calculated_mean(self):
+        """Which calculated means to draw. 'None' hides both when the group is unchecked."""
+        if not self.binned_calculated_mean_gb.isChecked():
+            return 'None'
+        return self.binned_calculated_mean_cb.currentText()
+
     def _rx_noise_range_lims(self):
         """Return [min, max] dB when the RX noise range box is checked and valid, else []."""
         if not self.binned_rxnoise_range_gb.isChecked():
@@ -1573,8 +1619,9 @@ class MainWindow(QtWidgets.QMainWindow):
             param_adjust=plot_data.get('param_adjust', 0.0),
             param_lims=plot_data.get('param_lims', []),
             binned_range_lims=plot_data.get('binned_range_lims', []),
-            error_bar_type=plot_data.get('error_bar_type', 'Standard Deviation'),
+            error_bar_type=plot_data.get('error_bar_type', 'Standard Deviation Linear'),
             individual_type=plot_data.get('individual_type', 'Non-binned (Light Grey)'),
+            calculated_mean=plot_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
             sort=plot_data.get('sort', 'ascending'),
             source_heatmap=plot_data.get('source_heatmap', False),
             cmap=plot_data.get('cmap', 'jet'),
@@ -1665,6 +1712,9 @@ class MainWindow(QtWidgets.QMainWindow):
         for tag, bist_i, param_i in self._iter_transient_variants(bist, param):
             if self.remove_nulls_chk.isChecked():
                 bist_i = read_bist.mask_rx_noise_nulls(bist_i)
+            # Stamp the user's system info after tests are removed, so the
+            # filtered chart cannot fall back to a different file's values.
+            self._apply_sn_title_metadata(bist_i)
             data = dict(plot_data)
             data['bist'] = bist_i
             data['param'] = param_i
@@ -1701,8 +1751,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 param_adjust=source_data.get('param_adjust', 0.0),
                 param_lims=source_data.get('param_lims', []),
                 binned_range_lims=source_data.get('binned_range_lims', []),
-                error_bar_type=source_data.get('error_bar_type', 'Standard Deviation'),
+                error_bar_type=source_data.get('error_bar_type', 'Standard Deviation Linear'),
                 individual_type=source_data.get('individual_type', 'Non-binned (Light Grey)'),
+                calculated_mean=source_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
                 sort=source_data.get('sort', 'ascending'),
                 source_heatmap=True,
                 cmap=source_data['cmap'],
@@ -1874,6 +1925,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 'rx_noise_range_enabled': self.binned_rxnoise_range_gb.isChecked(),
                 'rx_noise_min': self.binned_rxnoise_min_tb.text(),
                 'rx_noise_max': self.binned_rxnoise_max_tb.text(),
+                'calculated_mean_enabled': self.binned_calculated_mean_gb.isChecked(),
+                'calculated_mean': self.binned_calculated_mean_cb.currentText(),
                 'error_bars_enabled': self.binned_error_type_gb.isChecked(),
                 'error_bar_type': self.binned_error_type_cb.currentText(),
                 'individual_measurements_enabled': self.binned_individual_gb.isChecked(),
@@ -2039,8 +2092,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.binned_rxnoise_range_gb.setChecked(bool(params.get('rx_noise_range_enabled', True)))
         self.binned_rxnoise_min_tb.setText(str(params.get('rx_noise_min', self.binned_rxnoise_min_tb.text())))
         self.binned_rxnoise_max_tb.setText(str(params.get('rx_noise_max', self.binned_rxnoise_max_tb.text())))
+        self.binned_calculated_mean_gb.setChecked(bool(params.get('calculated_mean_enabled', True)))
+        mean_index = self.binned_calculated_mean_cb.findText(params.get('calculated_mean', ''))
+        if mean_index >= 0:
+            self.binned_calculated_mean_cb.setCurrentIndex(mean_index)
         self.binned_error_type_gb.setChecked(bool(params.get('error_bars_enabled', True)))
-        error_index = self.binned_error_type_cb.findText(params.get('error_bar_type', ''))
+        saved_error = {
+            'Standard Deviation': 'Standard Deviation Linear',
+            'Standard Error': 'Standard Error Linear',
+        }.get(params.get('error_bar_type', ''), params.get('error_bar_type', ''))
+        error_index = self.binned_error_type_cb.findText(saved_error)
         if error_index >= 0:
             self.binned_error_type_cb.setCurrentIndex(error_index)
         self.binned_individual_gb.setChecked(bool(params.get('individual_measurements_enabled', True)))
@@ -2196,6 +2257,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.filenames == []:  # all files have been removed
             self.plot_bist_btn.setStyleSheet(self._export_btn_style_default)
+            if clear_all:
+                self._clear_shown_plots()
             self.update_log('Cleared all files')
             self.cruise_name_updated = False
             self.model_updated = False
@@ -2417,6 +2480,20 @@ class MainWindow(QtWidgets.QMainWindow):
             bist['ship_name'] = [ship for _ in bist['ship_name']] if isinstance(bist['ship_name'], list) else ship
         if 'cruise_name' in bist:
             bist['cruise_name'] = [description for _ in bist['cruise_name']] if isinstance(bist['cruise_name'], list) else description
+        if model_user:
+            self._replace_sysinfo_list(bist, 'model', self.model_number)
+        if sn_user:
+            self._replace_sysinfo_list(bist, 'sn', self.sn_tb.text().strip())
+        if date_user:
+            self._replace_sysinfo_list(bist, 'date', self.date_tb.text().strip())
+
+    def _replace_sysinfo_list(self, bist, key, value):
+        """Write one user-entered system-info value into every file slot."""
+        current = bist.get(key)
+        if isinstance(current, list) and current:
+            bist[key] = [value for _ in current]
+        elif key in bist:
+            bist[key] = [value]
 
     def refresh_system_info_from_ui(self):
         """Read system information fields into instance attributes."""
@@ -2466,15 +2543,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._replot_sysinfo_if_shown()
 
     def _on_sn_user_edited(self):
-        """Remember a serial number the user typed, and drop it from titles if they clear it."""
+        """Remember a serial number the user confirmed, including the value already shown."""
         if getattr(self, '_sn_programmatic_update', False):
             return
-        if self.sn_tb.text().strip() == getattr(self, '_sn_autofill_text', None):
-            return
+        already = self._sn_user_entered
+        same = self.sn_tb.text().strip() == getattr(self, '_sn_autofill_text', None)
         self._mark_sysinfo_user_edit('sn')
         if self.sn_tb.hasFocus():
             return
         self.update_system_info()
+        if already and same:
+            return
         self._replot_sysinfo_if_shown()
 
     def _on_date_user_edited(self):
@@ -2492,7 +2571,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_system_info_committed(self):
         """Apply system info after Enter or model selection; replot if plots are already shown."""
         sender = self.sender()
-        if sender == self.sn_tb and self.sn_tb.text().strip() != getattr(self, '_sn_autofill_text', None):
+        if sender == self.sn_tb:
             self._mark_sysinfo_user_edit('sn')
         elif sender == self.model_cbox:
             self._mark_sysinfo_user_edit('model')
@@ -2595,6 +2674,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Update the stored data with current settings
                     current_freq_data['error_bar_type'] = self.binned_error_type_cb.currentText()
                     current_freq_data['individual_type'] = self.binned_individual_cb.currentText()
+                    current_freq_data['calculated_mean'] = self._binned_calculated_mean()
                     current_freq_data['model'] = self.model_number
                     current_freq_data['sn'] = self.sn
                     current_freq_data['ship_name'] = self.ship_name
@@ -2657,6 +2737,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              binned_range_lims=current_freq_data['binned_range_lims'],
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
+                                             calculated_mean=current_freq_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
                                              sort=current_freq_data.get('sort', 'ascending'),
                                              return_fig=True,
                                              **self._binned_source_kwargs(current_freq_data))
@@ -2671,6 +2752,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              binned_range_lims=current_freq_data['binned_range_lims'],
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
+                                             calculated_mean=current_freq_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
                                              sort=current_freq_data.get('sort', 'ascending'),
                                              return_fig=True,
                                              **self._binned_source_kwargs(current_freq_data))
@@ -2685,6 +2767,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              binned_range_lims=current_freq_data['binned_range_lims'],
                                              error_bar_type=current_freq_data['error_bar_type'],
                                              individual_type=current_freq_data['individual_type'],
+                                             calculated_mean=current_freq_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
                                              sort=current_freq_data.get('sort', 'ascending'),
                                              return_fig=True,
                                              **self._binned_source_kwargs(current_freq_data))
@@ -2771,7 +2854,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # continue
 
             # update user entry fields to any info available in BIST, store conflicting fields if different
-            if sys_info['model']:
+            if sys_info['model'] and not self._model_user_entered:
                 print('BIST has model=', sys_info['model'])
                 model = sys_info['model']
                 # if sys_info['model'].find('2040') > -1:
@@ -2780,7 +2863,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif sys_info['model'] == '2042':
                     model = '2042'
 
-                if not self.model_updated and not self._model_user_entered:  # update model with first model found
+                if not self.model_updated:  # update model with first model found
                     model_label = 'EM ' + model
                     if self.model_cbox.currentText() != model_label:
                         self.model_cbox.setCurrentIndex(self.model_cbox.findText(model_label))
@@ -2794,8 +2877,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log('***WARNING: New model (EM ' + model + ') detected in ' + fname_str)
                     self.conflicting_fields.append('model')
 
-            if sys_info['sn']:
-                if not self._sn_user_entered and not self.sn_updated:
+            if sys_info['sn'] and not self._sn_user_entered:
+                if not self.sn_updated:
                     sn_text = str(sys_info['sn']).strip()
                     if self.sn_tb.text().strip() != sn_text:
                         self._sn_programmatic_update = True
@@ -2817,8 +2900,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.update_log('***WARNING: New serial number (' + sys_info['sn'] + ') detected in ' + fname_str)
                     self.conflicting_fields.append('sn')
 
-            if sys_info['date']:
-                if not self.date_updated and not self._date_user_entered:  # update date with first date found
+            if sys_info['date'] and not self._date_user_entered:
+                if not self.date_updated:  # update date with first date found
                     date_text = str(sys_info['date']).strip()
                     if self.date_tb.text().strip() != date_text:
                         self._sysinfo_programmatic_update = True
@@ -2840,6 +2923,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # after reading all files, reduce set of missing fields and disable/enable plot button accordingly
         self.missing_fields = [k for k in set(self.missing_fields)]
         self.conflicting_fields = [k for k in set(self.conflicting_fields)]
+        confirmed = set()
+        if self._model_user_entered:
+            confirmed.add('model')
+        if self._sn_user_entered:
+            confirmed.add('sn')
+        if self._date_user_entered:
+            confirmed.add('date')
+        if confirmed:
+            self.missing_fields = [k for k in self.missing_fields if k not in confirmed]
+            self.conflicting_fields = [k for k in self.conflicting_fields if k not in confirmed]
 
         # if self.missing_fields or self.conflicting_fields:
         self.update_sys_info_colors()
@@ -2854,8 +2947,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.StandardButton.Ok)
 
     def update_sys_info_colors(self):  # update the user field colors to red/cyan based on missing/conflicting info
+        confirmed = set()
+        if self._model_user_entered:
+            confirmed.add('model')
+        if self._sn_user_entered:
+            confirmed.add('sn')
+        if self._date_user_entered:
+            confirmed.add('date')
         for widget in [self.model_cbox, self.sn_tb, self.date_tb]:  # set text to red for all missing fields
             widget.setStyleSheet('color: cyan')  # reset field to cyan before checking missing/conflicting fields
+            if widget.objectName() in confirmed:
+                continue
             if widget.objectName() in self.missing_fields + self.conflicting_fields:
                 widget.setStyleSheet('color: red')
 
@@ -3614,6 +3716,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'binned_range_lims': binned_range_lims,
                                 'error_bar_type': self.binned_error_type_cb.currentText(),
                                 'individual_type': self.binned_individual_cb.currentText(),
+                                'calculated_mean': self._binned_calculated_mean(),
                                 'sort': sort_order,
                                 'plot_function': read_bist.plot_rx_noise_binned_new,  # Store function for regeneration
                                 'model': self.model_number,
@@ -3636,6 +3739,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     binned_range_lims=binned_range_lims,
                                     error_bar_type=self.binned_error_type_cb.currentText(),
                                     individual_type=self.binned_individual_cb.currentText(),
+                                    calculated_mean=self._binned_calculated_mean(),
                                     sort=sort_order,
                                     return_fig=True),
                                 source_fn=read_bist.plot_rx_noise_binned_new)
@@ -3690,6 +3794,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'sort': sort_order,
                                     'error_bar_type': self.binned_error_type_cb.currentText(),
                                     'individual_type': self.binned_individual_cb.currentText(),
+                                    'calculated_mean': self._binned_calculated_mean(),
                                     'plot_function': read_bist.plot_rx_noise_binned_new,
                                 }
                                 chart_names.extend(self._emit_rx_noise_charts(
@@ -3705,6 +3810,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                         binned_range_lims=binned_range_lims,
                                         error_bar_type=self.binned_error_type_cb.currentText(),
                                         individual_type=self.binned_individual_cb.currentText(),
+                                    calculated_mean=self._binned_calculated_mean(),
                                         sort=sort_order,
                                         return_fig=True),
                                     source_fn=read_bist.plot_rx_noise_binned_new))
@@ -3756,6 +3862,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'binned_range_lims': binned_range_lims,
                                 'error_bar_type': self.binned_error_type_cb.currentText(),
                                 'individual_type': self.binned_individual_cb.currentText(),
+                                'calculated_mean': self._binned_calculated_mean(),
                                 'sort': sort_order,
                                 'plot_function': read_bist.plot_rx_noise_binned_2kt,  # Store function for regeneration
                                 'model': self.model_number,
@@ -3778,6 +3885,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     binned_range_lims=binned_range_lims,
                                     error_bar_type=self.binned_error_type_cb.currentText(),
                                     individual_type=self.binned_individual_cb.currentText(),
+                                    calculated_mean=self._binned_calculated_mean(),
                                     sort=sort_order,
                                     return_fig=True),
                                 source_fn=read_bist.plot_rx_noise_binned_2kt)
@@ -3832,6 +3940,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'sort': sort_order,
                                     'error_bar_type': self.binned_error_type_cb.currentText(),
                                     'individual_type': self.binned_individual_cb.currentText(),
+                                    'calculated_mean': self._binned_calculated_mean(),
                                     'plot_function': read_bist.plot_rx_noise_binned_2kt,
                                 }
                                 chart_names.extend(self._emit_rx_noise_charts(
@@ -3847,6 +3956,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                         binned_range_lims=binned_range_lims,
                                         error_bar_type=self.binned_error_type_cb.currentText(),
                                         individual_type=self.binned_individual_cb.currentText(),
+                                    calculated_mean=self._binned_calculated_mean(),
                                         sort=sort_order,
                                         return_fig=True),
                                     source_fn=read_bist.plot_rx_noise_binned_2kt))
@@ -3903,6 +4013,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'binned_range_lims': binned_range_lims,
                                 'error_bar_type': self.binned_error_type_cb.currentText(),
                                 'individual_type': self.binned_individual_cb.currentText(),
+                                'calculated_mean': self._binned_calculated_mean(),
                                 'sort': sort_order,
                                 'plot_function': discrete_plot_fn,
                                 'model': self.model_number,
@@ -3925,6 +4036,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     binned_range_lims=binned_range_lims,
                                     error_bar_type=self.binned_error_type_cb.currentText(),
                                     individual_type=self.binned_individual_cb.currentText(),
+                                    calculated_mean=self._binned_calculated_mean(),
                                     sort=sort_order,
                                     return_fig=True),
                                 source_fn=discrete_plot_fn)
@@ -3980,6 +4092,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'binned_range_lims': binned_range_lims,
                                     'error_bar_type': self.binned_error_type_cb.currentText(),
                                     'individual_type': self.binned_individual_cb.currentText(),
+                                    'calculated_mean': self._binned_calculated_mean(),
                                     'sort': sort_order,
                                     'plot_function': discrete_plot_fn,
                                     'model': self.model_number,
@@ -4001,6 +4114,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                         binned_range_lims=binned_range_lims,
                                         error_bar_type=self.binned_error_type_cb.currentText(),
                                         individual_type=self.binned_individual_cb.currentText(),
+                                    calculated_mean=self._binned_calculated_mean(),
                                         sort=sort_order,
                                         return_fig=True),
                                     source_fn=discrete_plot_fn))
@@ -4722,6 +4836,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                binned_range_lims=plot_data['binned_range_lims'],
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
+                                                               calculated_mean=plot_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
                                                                sort=plot_data.get('sort', 'ascending'),
                                                                return_fig=True,
                                                                **self._binned_source_kwargs(plot_data))
@@ -4742,6 +4857,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                binned_range_lims=plot_data['binned_range_lims'],
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
+                                                               calculated_mean=plot_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
                                                                sort=plot_data.get('sort', 'ascending'),
                                                                return_fig=True,
                                                                **self._binned_source_kwargs(plot_data))
@@ -4762,6 +4878,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                binned_range_lims=plot_data['binned_range_lims'],
                                                                error_bar_type=plot_data['error_bar_type'],
                                                                individual_type=plot_data['individual_type'],
+                                                               calculated_mean=plot_data.get('calculated_mean', 'Arithmetic & Linear Mean'),
                                                                sort=plot_data.get('sort', 'ascending'),
                                                                return_fig=True,
                                                                **self._binned_source_kwargs(plot_data))
@@ -4979,7 +5096,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Save the figure if requested
             if save_figs:
-                fig_name = 'TX_Z_EM' + bist['model'][file_index] + '_SN_' + bist['sn'][file_index] + '_from_text_file_' + fname_str +\
+                fig_name = 'TX_Z_EM' + bist['model'][file_index] + '_SN_' + bist['sn'][file_index] + '_' + fname_str +\
                            '_v' + str(plot_style) + '.png'
                 fig.savefig(os.path.join(output_dir, fig_name), dpi=100, bbox_inches='tight')
 
@@ -5312,6 +5429,34 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_log(f"Traceback: {traceback.format_exc()}")
             return bist  # Return original if modification fails
 
+    def _clear_shown_plots(self):
+        """Drop every chart and return the plot window to the startup credit page."""
+        shown = getattr(self, 'plot_figure', None)
+        for figure in list(getattr(self, 'all_figures', []) or []):
+            if figure is shown:
+                continue
+            try:
+                plt.close(figure)
+            except Exception:
+                pass
+        self.all_figures = []
+        self.frequency_data = []
+        self.freq_list = []
+        self.current_chart_index = 0
+        self.total_charts = 0
+        self.last_plotted_bist = None
+        self.last_bist_test_type = None
+        self.last_plotted_files = []
+        self.last_into_seas_file = None
+        if shown is not None:
+            shown.clear()
+            try:
+                self.plot_figure_canvas.draw_idle()
+            except Exception:
+                pass
+        self._show_about_in_plot_window()
+        self.update_navigation_controls()
+
     def update_navigation_controls(self):
         """Update the navigation controls based on current state"""
         if self.total_charts > 1:
@@ -5325,11 +5470,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.freq_label.setText(f"Chart: {freq_name} ({self.current_chart_index + 1} of {self.total_charts})")
             else:
                 self.freq_label.setText(f"Chart: {self.current_chart_index + 1} of {self.total_charts}")
-        else:
+        elif self.total_charts == 1:
             # Disable navigation buttons for single chart
             self.prev_chart_btn.setEnabled(False)
             self.next_chart_btn.setEnabled(False)
             self.freq_label.setText("Chart: Single")
+        else:
+            self.prev_chart_btn.setEnabled(False)
+            self.next_chart_btn.setEnabled(False)
+            self.freq_label.setText("Chart: None")
 
 
 class NewPopup(QtWidgets.QWidget):  # new class for additional plots

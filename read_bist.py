@@ -2171,7 +2171,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
             if save_figs is True:
                 # fig = plt.gcf()
                 # fig.set_size_inches(10, 10)
-                fig_name = 'TX_Z_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_from_text_file_' + fname_str +\
+                fig_name = 'TX_Z_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_' + fname_str +\
                            '_v' + str(plot_style) + '.png'
                 # print('output_dir=', output_dir)
                 # print('fig_name=', fig_name)
@@ -3076,13 +3076,19 @@ def drop_rx_noise_tests(rxn, param, bad_indexes):
     out['rxn'] = new_rxn
     n_files = len(file_kept)
     remaining_files = [i for i, kept in enumerate(file_kept) if kept]
+    # System info is one value per file. Do not treat it as a per-test series:
+    # dropping a transient would otherwise replace the user's model, serial
+    # number, date, ship, or description with a later file's parsed value.
+    per_test_keys = {'test', 'speed_bist', 'azimuth_bist', 'speed', 'hdg_true', 'azimuth', 'time'}
     for key, value in list(out.items()):
         if key == 'rxn' or not isinstance(value, list):
             continue
-        filtered = _filter_parallel_sequence(value, bad, total)
-        if filtered is not None:
-            out[key] = filtered
-        elif len(value) == n_files:
+        if key in per_test_keys:
+            filtered = _filter_parallel_sequence(value, bad, total)
+            if filtered is not None:
+                out[key] = filtered
+            continue
+        if len(value) == n_files and all(0 <= i < len(value) for i in remaining_files):
             out[key] = [value[i] for i in remaining_files]
 
     new_param = param
@@ -3320,18 +3326,10 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     # plot rxn vs test number
     ax2 = plt.subplot(gs[1])
     
-    # Color ramp: user RX noise range when provided, otherwise 30-70 dB.
-    # Values outside the ramp stay black (under) and magenta (over).
-    vmin = 30.0
-    vmax = 70.0
-    if len(noise_lims) == 2:
-        try:
-            vmin = float(noise_lims[0])
-            vmax = float(noise_lims[1])
-            print(f'Set RX noise color range to: {vmin} - {vmax} dB')
-        except (TypeError, ValueError):
-            print(f'Warning: Invalid RX noise range values: {noise_lims}, using 30-70 dB')
-            vmin, vmax = 30.0, 70.0
+    # Color ramp: user RX noise range when provided, otherwise the plotted data.
+    # Values outside a user range stay black (under) and magenta (over).
+    vmin, vmax = _noise_color_limits(noise_lims, rxn_all)
+    print(f'Set RX noise color range to: {vmin} - {vmax} dB')
     data_min = np.nanmin(rxn_all)
     data_max = np.nanmax(rxn_all)
     
@@ -4273,15 +4271,29 @@ def _new_binned_figure(source_heatmap=False, for_export=False):
     return fig, fig.add_subplot(gs[0]), fig.add_subplot(gs[1])
 
 
-def _noise_color_limits(noise_lims):
-    vmin, vmax = 30.0, 70.0
+def _noise_color_limits(noise_lims, values=None):
+    """User color range, or the plotted data range when that range is not set."""
     if len(noise_lims) == 2:
         try:
             vmin = float(noise_lims[0])
             vmax = float(noise_lims[1])
+            if np.isfinite(vmin) and np.isfinite(vmax) and vmin < vmax:
+                return vmin, vmax
         except (TypeError, ValueError):
-            vmin, vmax = 30.0, 70.0
-    return vmin, vmax
+            pass
+        return 30.0, 70.0
+    if values is not None:
+        finite = np.asarray(values, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if finite.size:
+            vmin = float(np.min(finite))
+            vmax = float(np.max(finite))
+            if vmin == vmax:
+                pad = 1.0
+                vmin -= pad
+                vmax += pad
+            return vmin, vmax
+    return 30.0, 70.0
 
 
 def _rx_noise_colormap(name, vmin, vmax, redblue_center):
@@ -4360,7 +4372,7 @@ def _draw_binned_source_heatmap(fig, ax, element_columns, groups, param_unit, no
         col += len(idxs)
 
     heat = np.column_stack(columns)
-    vmin, vmax = _noise_color_limits(noise_lims)
+    vmin, vmax = _noise_color_limits(noise_lims, heat)
     colormap = _rx_noise_colormap(cmap, vmin, vmax, redblue_center)
     im = ax.imshow(heat, cmap=colormap, aspect='auto', vmin=vmin, vmax=vmax, interpolation='nearest')
     ax.invert_yaxis()
@@ -4395,6 +4407,115 @@ def _draw_binned_source_heatmap(fig, ax, element_columns, groups, param_unit, no
     cbar.set_label(r'RX Noise (dB re 1 $\mu$Pa/$\sqrt{Hz}$)', fontsize=10)
 
 
+def _error_bar_spec(error_bar_type):
+    """Return (arithmetic, standard_error) for an error-bar choice.
+
+    Older names without Linear or Arithmetic are the linear versions.
+    """
+    text = (error_bar_type or 'Standard Deviation Linear').strip()
+    text = {
+        'Standard Deviation': 'Standard Deviation Linear',
+        'Standard Error': 'Standard Error Linear',
+    }.get(text, text)
+    return ('Arithmetic' in text), ('Standard Error' in text)
+
+
+def _binned_error_db(noise_dB, error_bar_type):
+    """Error-bar half-height in dB for one bin.
+
+    Linear bars use the spread of the amplitudes, converted back to dB.
+    Arithmetic bars use the spread of the dB values themselves.
+    Standard error divides that spread by sqrt(n).
+    """
+    values = np.asarray(noise_dB, dtype=float)
+    values = values[np.isfinite(values)]
+    n = len(values)
+    if n == 0:
+        return 0.0
+    arithmetic, standard_error = _error_bar_spec(error_bar_type)
+    if arithmetic:
+        spread = float(np.std(values))
+        if standard_error:
+            spread = spread / np.sqrt(n)
+        return spread
+    amplitudes = 10 ** (values / 20.0)
+    mean_amplitude = float(np.mean(amplitudes))
+    spread = float(np.std(amplitudes))
+    if standard_error:
+        spread = spread / np.sqrt(n)
+    if not np.isfinite(mean_amplitude) or mean_amplitude <= 0:
+        return 0.0
+    return float(20 * np.log10(1 + spread / mean_amplitude))
+
+
+def _error_bar_filename_token(error_bar_type):
+    """Short filename token for the selected error-bar type."""
+    arithmetic, standard_error = _error_bar_spec(error_bar_type)
+    if arithmetic and standard_error:
+        return 'StdErrArith'
+    if arithmetic:
+        return 'StdDevArith'
+    if standard_error:
+        return 'StdErrLinear'
+    return 'StdDevLinear'
+
+
+def _binned_mean_visibility(calculated_mean):
+    """Return (show_linear, show_arithmetic) for a binned calculated-mean choice."""
+    mode = (calculated_mean or 'Arithmetic & Linear Mean').strip()
+    if mode == 'None':
+        return False, False
+    if mode == 'Arithmetic Mean':
+        return False, True
+    if mode == 'Linear Mean':
+        return True, False
+    return True, True
+
+
+def _draw_binned_calculated_means(ax, centers, linear_means, error_bars, arithmetic_means,
+                                  error_bar_type, calculated_mean):
+    """Draw the selected means. Error bars sit on the mean they describe."""
+    show_linear, show_arithmetic = _binned_mean_visibility(calculated_mean)
+    arithmetic_bars, standard_error = _error_bar_spec(error_bar_type)
+    bar_name = 'Standard Error' if standard_error else 'Standard Deviation'
+    if len(centers) == 0:
+        return show_linear, show_arithmetic
+    if show_linear:
+        if arithmetic_bars:
+            ax.plot(centers, linear_means, 'o-', color='blue', markersize=8, linewidth=2,
+                    label='Linear Mean', zorder=3)
+        else:
+            ax.errorbar(centers, linear_means, yerr=error_bars, fmt='o-', capsize=5, capthick=2,
+                        markersize=8, linewidth=2, color='blue', ecolor='red',
+                        elinewidth=1.5, label=f'Linear Mean ± {bar_name}', zorder=3)
+    if show_arithmetic:
+        if arithmetic_bars:
+            ax.errorbar(centers, arithmetic_means, yerr=error_bars, fmt='o-', capsize=5, capthick=2,
+                        markersize=6, linewidth=2, color='green', ecolor='red',
+                        elinewidth=1.5, label=f'Arithmetic Mean ± {bar_name}', zorder=3)
+        else:
+            ax.plot(centers, arithmetic_means, 'o-', color='green',
+                    markersize=6, linewidth=2, label='Arithmetic Mean', zorder=2)
+    return show_linear, show_arithmetic
+
+
+def _binned_count_label_y(index, linear_means, error_bars, arithmetic_means,
+                          show_linear, show_arithmetic, error_bar_type, y_max_lim=None):
+    """Place the n= count above the error bar of the mean those bars describe."""
+    arithmetic_bars, _standard_error = _error_bar_spec(error_bar_type)
+    if arithmetic_bars and show_arithmetic:
+        return _binned_n_label_y(
+            arithmetic_means[index], error_bars[index], arithmetic_means, y_max_lim=y_max_lim)
+    if (not arithmetic_bars) and show_linear:
+        return _binned_n_label_y(
+            linear_means[index], error_bars[index], linear_means, y_max_lim=y_max_lim)
+    if show_linear:
+        return _binned_n_label_y(linear_means[index], 0.0, linear_means, y_max_lim=y_max_lim)
+    if show_arithmetic:
+        return _binned_n_label_y(arithmetic_means[index], 0.0, arithmetic_means, y_max_lim=y_max_lim)
+    return _binned_n_label_y(linear_means[index], 0.0, linear_means, y_max_lim=y_max_lim)
+
+
 def _binned_n_label_y(mean, yerr, means_for_range, y_max_lim=None):
     """Y coordinate for n= count labels, placed above the error bar cap."""
     data_range = max(means_for_range) - min(means_for_range) if len(means_for_range) else 0.0
@@ -4407,8 +4528,10 @@ def _binned_n_label_y(mean, yerr, means_for_range, y_max_lim=None):
 
 def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                             param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[],
-                            binned_range_lims=[], error_bar_type='Standard Deviation',
-                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False,
+                            binned_range_lims=[], error_bar_type='Standard Deviation Linear',
+                            individual_type='Non-binned (Light Grey)',
+                            calculated_mean='Arithmetic & Linear Mean',
+                            sort='ascending', return_fig=False,
                             source_heatmap=False, cmap='jet', redblue_center=55):
     """
     Plot RX Noise binned by speed with mean noise levels.
@@ -4549,14 +4672,7 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             mean_linear = np.mean(noise_linear)
             mean_dB = 20 * np.log10(mean_linear)
             
-            # Calculate standard deviation in linear domain, convert to dB equivalent
-            if error_bar_type == 'Standard Error':
-                # Standard error = std / sqrt(n)
-                std_linear = np.std(noise_linear) / np.sqrt(len(noise_linear))
-            else:
-                # Standard deviation
-                std_linear = np.std(noise_linear)
-            std_dB = 20 * np.log10(1 + std_linear/mean_linear)  # Approximate dB std
+            std_dB = _binned_error_db(noise_dB, error_bar_type)
             
             # Calculate simple arithmetic mean of dB values
             simple_mean_dB = np.mean(noise_dB)
@@ -4677,21 +4793,16 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             ax.scatter(binned_x, binned_y, color='cyan', alpha=0.6, s=20, 
                       label='Individual Measurements (Binned)', zorder=2)
     
-    # Second layer: Plot with error bars (using filtered data if param_lims was provided)
-    ax.errorbar(binned_centers, binned_means, yerr=binned_std, fmt='o-', capsize=5, capthick=2, 
-               markersize=8, linewidth=2, color='blue', ecolor='red', 
-               elinewidth=1.5, label=f'Linear Mean ± {error_bar_type}', zorder=3)
-    
-    # Third layer: Add simple arithmetic mean line in green
-    ax.plot(binned_centers, binned_simple_means, 'o-', color='green', 
-             markersize=6, linewidth=2, label='Arithmetic Mean', zorder=2)
-    
-    # Add text labels showing number of tests in each bin (above error bars)
+    show_linear, show_arithmetic = _draw_binned_calculated_means(
+        ax, binned_centers, binned_means, binned_std, binned_simple_means,
+        error_bar_type, calculated_mean)
+
     y_max_lim = float(binned_range_lims[1]) if len(binned_range_lims) == 2 else None
     for i, center in enumerate(binned_centers):
         count = binned_counts[center]
-        label_y = _binned_n_label_y(
-            binned_means[i], binned_std[i], binned_means, y_max_lim=y_max_lim)
+        label_y = _binned_count_label_y(
+            i, binned_means, binned_std, binned_simple_means,
+            show_linear, show_arithmetic, error_bar_type, y_max_lim=y_max_lim)
         ax.text(center, label_y,
                 f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
     
@@ -4792,7 +4903,7 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         # Clean up date string for filename
         clean_date_str = date_str.replace("/", "").replace("-", "")
         # Create error bar type suffix for filename
-        error_suffix = "StdDev" if error_bar_type == "Standard Deviation" else "StdErr"
+        error_suffix = _error_bar_filename_token(error_bar_type)
         # Add _bin suffix if individual measurements are binned or both
         bin_suffix = "_bin" if individual_type in ["Binned (Cyan)", "Both (Binned + Non-binned)"] else ""
         source_suffix = "_bists" if source_heatmap else ""
@@ -4820,8 +4931,10 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
 
 def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                             param_unit='SOG (kts)', param_adjust=0.0, param=[], param_lims=[],
-                            binned_range_lims=[], error_bar_type='Standard Deviation',
-                            individual_type='Non-binned (Light Grey)', sort='ascending', return_fig=False,
+                            binned_range_lims=[], error_bar_type='Standard Deviation Linear',
+                            individual_type='Non-binned (Light Grey)',
+                            calculated_mean='Arithmetic & Linear Mean',
+                            sort='ascending', return_fig=False,
                             source_heatmap=False, cmap='jet', redblue_center=55):
     """
     Plot RX Noise binned by speed with 2-knot intervals.
@@ -4994,14 +5107,7 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             mean_linear = np.mean(noise_linear)
             mean_dB = 20 * np.log10(mean_linear)
             
-            # Calculate standard deviation in linear domain, convert to dB equivalent
-            if error_bar_type == 'Standard Error':
-                # Standard error = std / sqrt(n)
-                std_linear = np.std(noise_linear) / np.sqrt(len(noise_linear))
-            else:
-                # Standard deviation
-                std_linear = np.std(noise_linear)
-            std_dB = 20 * np.log10(1 + std_linear/mean_linear)  # Approximate dB std
+            std_dB = _binned_error_db(noise_dB, error_bar_type)
             
             # Calculate simple arithmetic mean of dB values
             simple_mean_dB = np.mean(noise_dB)
@@ -5120,20 +5226,15 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                 ax.scatter(binned_x, binned_y, color='cyan', alpha=0.6, s=20, 
                           label='Individual Measurements (Binned)', zorder=2)
         
-        # Second layer: Plot with error bars (using filtered data if param_lims was provided)
-        ax.errorbar(centers, means, yerr=stds, fmt='o-', capsize=5, capthick=2, 
-                   markersize=8, linewidth=2, color='blue', ecolor='red', 
-                   elinewidth=1.5, label=f'Linear Mean ± {error_bar_type}', zorder=3)
-        
-        # Third layer: Add simple arithmetic mean line in green
-        ax.plot(centers, simple_means, 'o-', color='green', 
-                 markersize=6, linewidth=2, label='Arithmetic Mean', zorder=2)
-        
-        # Add text labels showing number of tests in each bin (above error bars)
+        show_linear, show_arithmetic = _draw_binned_calculated_means(
+            ax, centers, means, stds, simple_means, error_bar_type, calculated_mean)
+
         y_max_lim = float(binned_range_lims[1]) if len(binned_range_lims) == 2 else None
         for i, center in enumerate(centers):
             count = binned_counts[center]
-            label_y = _binned_n_label_y(means[i], stds[i], means, y_max_lim=y_max_lim)
+            label_y = _binned_count_label_y(
+                i, means, stds, simple_means, show_linear, show_arithmetic,
+                error_bar_type, y_max_lim=y_max_lim)
             ax.text(center, label_y,
                     f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
         
@@ -5220,7 +5321,7 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             # Clean up date string for filename
             clean_date_str = date_str.replace("/", "").replace("-", "")
             # Create error bar type suffix for filename
-            error_suffix = "StdDev" if error_bar_type == "Standard Deviation" else "StdErr"
+            error_suffix = _error_bar_filename_token(error_bar_type)
             # Add _bin suffix if individual measurements are binned
             bin_suffix = "_bin" if individual_type == "Binned (Cyan)" else ""
             source_suffix = "_bists" if source_heatmap else ""
@@ -5401,8 +5502,9 @@ def plot_rx_noise_binned_2kt_combined_frequencies(rxn_all_frequencies, save_figs
 
 def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                                    param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
-                                   binned_range_lims=[], error_bar_type='Standard Deviation',
-                                   individual_type='Non-binned (Light Grey)', sort='ascending',
+                                   binned_range_lims=[], error_bar_type='Standard Deviation Linear',
+                                   individual_type='Non-binned (Light Grey)',
+                                   calculated_mean='Arithmetic & Linear Mean', sort='ascending',
                                    return_fig=False, x_padding=50.0, source_heatmap=False,
                                    cmap='jet', redblue_center=55):
     """
@@ -5514,14 +5616,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
             mean_linear = np.mean(noise_linear)  # Arithmetic mean of linear values
             mean_dB = 20 * np.log10(mean_linear)  # Convert back to dB
             
-            # Calculate standard deviation or standard error
-            if error_bar_type == 'Standard Error':
-                # Standard error = std / sqrt(n)
-                std_linear = np.std(noise_linear) / np.sqrt(len(noise_linear))
-            else:
-                # Standard deviation
-                std_linear = np.std(noise_linear)
-            std_dB = 20 * np.log10(1 + std_linear/mean_linear)  # Approximate dB std
+            std_dB = _binned_error_db(noise_dB, error_bar_type)
             
             # Calculate simple arithmetic mean of dB values
             simple_mean_dB = np.mean(noise_dB)
@@ -5644,21 +5739,16 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
             ax.scatter(binned_x, binned_y, color='cyan', alpha=0.6, s=20, 
                       label='Individual Measurements (Binned)', zorder=2)
     
-    # Second layer: Plot with error bars (using filtered data if param_lims was provided)
     if centers:
-        ax.errorbar(centers, means, yerr=stds, fmt='o-', capsize=5, capthick=2, 
-                   markersize=8, linewidth=2, color='blue', ecolor='red', 
-                   elinewidth=1.5, label=f'Linear Mean ± {error_bar_type}', zorder=3)
-        
-        # Third layer: Add simple arithmetic mean line in green
-        ax.plot(centers, simple_means, 'o-', color='green', 
-                markersize=6, linewidth=2, label='Arithmetic Mean', zorder=2)
-        
-        # Add text labels showing number of tests in each bin (above error bars)
+        show_linear, show_arithmetic = _draw_binned_calculated_means(
+            ax, centers, means, stds, simple_means, error_bar_type, calculated_mean)
+
         y_max_lim = float(binned_range_lims[1]) if len(binned_range_lims) == 2 else None
         for i, center in enumerate(centers):
             count = binned_counts[center]
-            label_y = _binned_n_label_y(means[i], stds[i], means, y_max_lim=y_max_lim)
+            label_y = _binned_count_label_y(
+                i, means, stds, simple_means, show_linear, show_arithmetic,
+                error_bar_type, y_max_lim=y_max_lim)
             ax.text(center, label_y, f'n={count}', ha='center', va='bottom', fontsize=8, fontweight='bold')
     
     # Set Y-axis limits if specified
@@ -5743,7 +5833,7 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
         clean_date_str = date_str.replace("/", "").replace("-", "")
 
         # Create filename with error bar type
-        error_suffix = "_std" if error_bar_type == 'Standard Deviation' else "_se"
+        error_suffix = '_' + _error_bar_filename_token(error_bar_type)
         bin_suffix = "_bin" if individual_type in ["Binned (Cyan)", "Both (Binned + Non-binned)"] else ""
 
         # Clean frequency display for filename (remove brackets and other unwanted characters)
@@ -5777,27 +5867,31 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
 
 def plot_rx_noise_binned_rpm(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                              param_unit='RPM', param_adjust=0.0, param=[], param_lims=[],
-                             binned_range_lims=[], error_bar_type='Standard Deviation',
-                             individual_type='Non-binned (Light Grey)', sort='ascending',
+                             binned_range_lims=[], error_bar_type='Standard Deviation Linear',
+                             individual_type='Non-binned (Light Grey)',
+                             calculated_mean='Arithmetic & Linear Mean', sort='ascending',
                              return_fig=False, source_heatmap=False, cmap='jet', redblue_center=55):
     """Plot RX Noise binned by distinct RPM values."""
     return _plot_rx_noise_binned_discrete(
         rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
         param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
         binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
-        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=50.0,
+        individual_type=individual_type, calculated_mean=calculated_mean, sort=sort,
+        return_fig=return_fig, x_padding=50.0,
         source_heatmap=source_heatmap, cmap=cmap, redblue_center=redblue_center)
 
 
 def plot_rx_noise_binned_pitch(rxn, save_figs=True, output_dir=os.getcwd(), test_type='speed',
                                param_unit='Pitch (deg)', param_adjust=0.0, param=[], param_lims=[],
-                               binned_range_lims=[], error_bar_type='Standard Deviation',
-                               individual_type='Non-binned (Light Grey)', sort='ascending',
+                               binned_range_lims=[], error_bar_type='Standard Deviation Linear',
+                               individual_type='Non-binned (Light Grey)',
+                               calculated_mean='Arithmetic & Linear Mean', sort='ascending',
                                return_fig=False, source_heatmap=False, cmap='jet', redblue_center=55):
     """Plot RX Noise binned by distinct pitch values (deg or %)."""
     return _plot_rx_noise_binned_discrete(
         rxn, save_figs=save_figs, output_dir=output_dir, test_type=test_type,
         param_unit=param_unit, param_adjust=param_adjust, param=param, param_lims=param_lims,
         binned_range_lims=binned_range_lims, error_bar_type=error_bar_type,
-        individual_type=individual_type, sort=sort, return_fig=return_fig, x_padding=None,
+        individual_type=individual_type, calculated_mean=calculated_mean, sort=sort,
+        return_fig=return_fig, x_padding=None,
         source_heatmap=source_heatmap, cmap=cmap, redblue_center=redblue_center)
