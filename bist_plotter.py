@@ -275,6 +275,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sysinfo_programmatic_update = False
         self._sysinfo_replot_active = False
         self._sn_programmatic_update = False
+        self._noise_plot_styles = [
+            'vs. Speed', 'vs. Speed (Binned) - 1kt', 'vs. Speed (Binned) - 2kt',
+            'vs. RPM', 'vs. RPM (Binned)', 'vs. Pitch (deg)', 'vs. Pitch (Binned) - deg',
+            'vs. Pitch (%)', 'vs. Pitch (Binned) - %', 'vs. Azimuth']
+        self._channel_plot_styles = ['Plot All', 'History']
+        self._saved_noise_plot_style = self._noise_plot_styles[0]
+        self._saved_channel_plot_style = 'Plot All'
+        self.last_channel_plot_style = 'Plot All'
 
         # Navigation controls for multiple charts
         self.all_figures = []  # Store all frequency plots
@@ -610,18 +618,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.type_cbox.setCurrentIndex(2)  # Set "RX Noise Level" as default (index 2 in the combo box)
         bist_type_layout = BoxLayout([type_cbox_lbl, self.type_cbox], 'h', add_stretch=True)
 
-        noise_test_type_lbl = Label('Plot noise:', lblw, lblh, 'noise_type_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
-        noise_test_type_lbl.setFixedWidth(lblw)
-        # noise_test_type_list = ['vs. Speed', 'vs. Azimuth', 'Standalone']
-        noise_test_type_list = ['vs. Speed', 'vs. Speed (Binned) - 1kt', 'vs. Speed (Binned) - 2kt',
-                                'vs. RPM', 'vs. RPM (Binned)', 'vs. Pitch (deg)', 'vs. Pitch (Binned) - deg',
-                                'vs. Pitch (%)', 'vs. Pitch (Binned) - %', 'vs. Azimuth']
-        self.noise_test_type_cbox = ComboBox(noise_test_type_list, 200, btnh, 'noise_test_cbox',
-                                             'Select a noise test type:'
-                                             '\nNoise vs. speed (e.g., 0-10 kts; see Speed tab for options)'
-                                             '\nNoise vs. azimuth (e.g., heading relative to prevailing swell)'
-                                             '\n or Standalone (e.g., dockside or machinery testing)')
-        self.noise_test_type_cbox.setEnabled(False)
+        noise_test_type_lbl = Label('Plot Style:', 78, lblh, 'noise_type_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+        noise_test_type_lbl.setFixedWidth(78)
+        self.noise_test_type_cbox = ComboBox(self._noise_plot_styles, 200, btnh, 'noise_test_cbox',
+                                             'Choose what to plot for the selected BIST type.\n'
+                                             'RX Noise: noise mode (speed, RPM, pitch, azimuth).\n'
+                                             'TX or RX Channels: Plot All, or History only.')
+        self.noise_test_type_cbox.setEnabled(True)
         noise_type_layout = BoxLayout([noise_test_type_lbl, self.noise_test_type_cbox], 'h', add_stretch=True)
 
         cmap_lbl = Label('Colormap:', lblw, lblh, 'cmap_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
@@ -1168,7 +1171,52 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_dir_cbox.setEnabled('stw' in self.prm_unit_cbox.currentText().lower())
         self._apply_ignore_sis5_for_test_unit()
 
+    def _plot_style_items(self):
+        return [self.noise_test_type_cbox.itemText(i) for i in range(self.noise_test_type_cbox.count())]
+
+    def _set_plot_style_items(self, items, select_text):
+        """Replace Plot Style choices without emitting a plot."""
+        self.noise_test_type_cbox.blockSignals(True)
+        self.noise_test_type_cbox.clear()
+        self.noise_test_type_cbox.addItems(items)
+        index = self.noise_test_type_cbox.findText(select_text)
+        if index < 0:
+            index = 0
+        self.noise_test_type_cbox.setCurrentIndex(index)
+        self.noise_test_type_cbox.blockSignals(False)
+
+    def _sync_plot_style_for_bist_type(self):
+        """Show noise modes for RX Noise, or Plot All / History for channel BISTs."""
+        want_noise = self.type_cbox.currentIndex() == 2
+        items = self._plot_style_items()
+        current = self.noise_test_type_cbox.currentText()
+        if want_noise:
+            if items == self._noise_plot_styles:
+                if current in self._noise_plot_styles:
+                    self._saved_noise_plot_style = current
+            else:
+                select = self._saved_noise_plot_style
+                if select not in self._noise_plot_styles:
+                    select = self._noise_plot_styles[0]
+                self._set_plot_style_items(self._noise_plot_styles, select)
+        else:
+            if current in self._noise_plot_styles:
+                self._saved_noise_plot_style = current
+            if items == self._channel_plot_styles:
+                if current in self._channel_plot_styles:
+                    self._saved_channel_plot_style = current
+            else:
+                select = self._saved_channel_plot_style
+                if select not in self._channel_plot_styles:
+                    select = 'Plot All'
+                self._set_plot_style_items(self._channel_plot_styles, select)
+        self.noise_test_type_cbox.setEnabled(True)
+
+    def _channel_history_only(self):
+        return self.noise_test_type_cbox.currentText() == 'History'
+
     def update_buttons(self):  # update buttons/options from user actions
+        self._sync_plot_style_for_bist_type()
         if self.type_cbox.currentIndex() == 2:  # noise testing
             self.noise_test_gb.setEnabled(True)
             self.noise_test_type_cbox.setEnabled(True)
@@ -1252,7 +1300,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         else:
             self.noise_test_gb.setEnabled(False)
-            self.noise_test_type_cbox.setEnabled(False)
+            self.noise_test_type_cbox.setEnabled(True)
 
         self.prm_str_tb.setText(self.noise_params[self.prm_unit_cbox.currentText()])
         
@@ -1637,8 +1685,10 @@ class MainWindow(QtWidgets.QMainWindow):
             tx_oos = read_bist.write_tx_out_of_spec_report(bist, output_dir=output_dir)
             if tx_oos:
                 self.update_log(f'Wrote {len(tx_oos)} TX out-of-spec report(s)')
-            for ps in [1, 2]:
-                read_bist.plot_tx_z(bist, plot_style=ps, save_figs=True, output_dir=output_dir)
+            history_only = self.last_channel_plot_style == 'History'
+            if not history_only:
+                for ps in [1, 2]:
+                    read_bist.plot_tx_z(bist, plot_style=ps, save_figs=True, output_dir=output_dir)
             f_hist = read_bist.plot_tx_z_history(bist, save_figs=True, output_dir=output_dir)
             if f_hist:
                 self.update_log(f'Saved TX history plot {f_hist}')
@@ -1646,8 +1696,10 @@ class MainWindow(QtWidgets.QMainWindow):
             rx_oos = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=output_dir)
             if rx_oos:
                 self.update_log(f'Wrote {len(rx_oos)} RX array out-of-spec report(s)')
-            read_bist.plot_rx_z(bist, save_figs=True, output_dir=output_dir)
-            read_bist.plot_rx_z_line_heatmap(bist, save_figs=True, output_dir=output_dir)
+            history_only = self.last_channel_plot_style == 'History'
+            if not history_only:
+                read_bist.plot_rx_z(bist, save_figs=True, output_dir=output_dir)
+                read_bist.plot_rx_z_line_heatmap(bist, save_figs=True, output_dir=output_dir)
             read_bist.plot_rx_z_history(bist, save_figs=True, output_dir=output_dir)
         elif bist_test_type == self.bist_list[3]:  # RX Noise
             for plot_data in self.frequency_data:
@@ -1683,7 +1735,7 @@ class MainWindow(QtWidgets.QMainWindow):
             'files': files,
             'into_seas_file': self.last_into_seas_file,
             'bist_type': self.type_cbox.currentText(),
-            'plot_noise': self.noise_test_type_cbox.currentText() if self.type_cbox.currentIndex() == 2 else None,
+            'plot_noise': self.noise_test_type_cbox.currentText() or None,
             'colormap': colormap,
             'system_information': {
                 'model': self.model_cbox.currentText(),
@@ -1829,11 +1881,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if type_index < 0:
                 raise RuntimeError(f'BIST type {bist_type!r} is not available.')
             self.type_cbox.setCurrentIndex(type_index)
-            if plot_noise:
+            if plot_noise in self._noise_plot_styles:
+                self._saved_noise_plot_style = plot_noise
                 noise_index = self.noise_test_type_cbox.findText(plot_noise)
-                if noise_index < 0:
-                    raise RuntimeError(f'Plot noise {plot_noise!r} is not available.')
-                self.noise_test_type_cbox.setCurrentIndex(noise_index)
+                if noise_index >= 0:
+                    self.noise_test_type_cbox.setCurrentIndex(noise_index)
+            elif plot_noise in self._channel_plot_styles:
+                self._saved_channel_plot_style = plot_noise
+            elif plot_noise:
+                raise RuntimeError(f'Plot style {plot_noise!r} is not available.')
         finally:
             self.type_cbox.blockSignals(False)
             self.noise_test_type_cbox.blockSignals(False)
@@ -2453,15 +2509,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot_bist()
 
     def auto_plot_noise_type(self):
-        """Automatically plot when noise test type is selected"""
-        # Only auto-plot if we're in noise testing mode and have files selected
-        if (self.type_cbox.currentIndex() == 2 and  # RX Noise testing
-            len(self.file_list.selectedItems()) > 0 and  # Files are selected
-            self.noise_test_type_cbox.currentText() != ''):  # Noise type is selected
-            
-            self.update_log(f"Auto-plotting noise type: {self.noise_test_type_cbox.currentText()}")
-            # Call the plot generation method
-            self.plot_bist()
+        """Plot when the user changes Plot Style and files of this BIST type are selected."""
+        if self.file_list.count() == 0 or len(self.file_list.selectedItems()) == 0:
+            return
+        if not self.noise_test_type_cbox.currentText():
+            return
+        self.update_log('Auto-plotting ' + self.noise_test_type_cbox.currentText())
+        self.plot_bist()
 
     def _on_colormap_changed(self, _text=None):
         """Redraw the current RX noise heatmap with the colormap just selected."""
@@ -3301,6 +3355,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     break
 
             if bist_test_type == self.bist_list[1]:  # TX Channels
+                history_only = self._channel_history_only()
+                self.last_channel_plot_style = 'History' if history_only else 'Plot All'
                 # Initialize navigation for TX channel plots
                 self.all_figures = []
                 self.frequency_data = []
@@ -3309,33 +3365,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.current_chart_index = 0
                 
                 # Generate TX channel plots for each file and plot style
-                for i in range(len(bist['filename'])):
-                    for ps in [1, 2]:  # loop through both available styles of TX Z plots
-                        try:
-                            # Store the data needed to regenerate this plot
-                            plot_data = {
-                                'bist': bist,
-                                'file_index': i,
-                                'plot_style': ps,
-                                'plot_type': 'tx_channels'
-                            }
-                            self.frequency_data.append(plot_data)
-                            
-                            # Generate the plot and get the figure
-                            figure = self.generate_tx_channel_plot(bist, file_index=i, plot_style=ps,
-                                                                  save_figs=False, output_dir=self.output_dir)
-                            if figure:
-                                self.all_figures.append(figure)
-                                self.total_charts += 1
-                                
-                                # Create a descriptive name for this plot
-                                fname_str = bist['filename'][i][bist['filename'][i].rfind("/") + 1:-4]
-                                plot_name = f"TX Channels - {fname_str} (Style {ps})"
-                                self.freq_list.append(plot_name)
-                                
-                        except Exception as e:
-                            self.update_log(f"Error generating TX channel plot for file {i}, style {ps}: {str(e)}")
-                            continue
+                if not history_only:
+                    for i in range(len(bist['filename'])):
+                        for ps in [1, 2]:  # loop through both available styles of TX Z plots
+                            try:
+                                # Store the data needed to regenerate this plot
+                                plot_data = {
+                                    'bist': bist,
+                                    'file_index': i,
+                                    'plot_style': ps,
+                                    'plot_type': 'tx_channels'
+                                }
+                                self.frequency_data.append(plot_data)
+
+                                # Generate the plot and get the figure
+                                figure = self.generate_tx_channel_plot(bist, file_index=i, plot_style=ps,
+                                                                      save_figs=False, output_dir=self.output_dir)
+                                if figure:
+                                    self.all_figures.append(figure)
+                                    self.total_charts += 1
+
+                                    # Create a descriptive name for this plot
+                                    fname_str = bist['filename'][i][bist['filename'][i].rfind("/") + 1:-4]
+                                    plot_name = f"TX Channels - {fname_str} (Style {ps})"
+                                    self.freq_list.append(plot_name)
+
+                            except Exception as e:
+                                self.update_log(f"Error generating TX channel plot for file {i}, style {ps}: {str(e)}")
+                                continue
 
                 # Add TX history plot to GUI navigation as the third TX plot type
                 try:
@@ -3371,6 +3428,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._update_export_button(mark_pending=True)
 
             elif bist_test_type == self.bist_list[2]:  # RX Channels
+                history_only = self._channel_history_only()
+                self.last_channel_plot_style = 'History' if history_only else 'Plot All'
                 # Initialize navigation for RX channel plots
                 self.all_figures = []
                 self.frequency_data = []
@@ -3391,18 +3450,19 @@ class MainWindow(QtWidgets.QMainWindow):
                     freq_labels = [str(f) for f in bist['freq_range'][file_index][test_index]]
                     
                     # Heatmap and line+heatmap are one pair per test, then the next test.
-                    heatmap_figure = read_bist.plot_rx_z(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
-                    lineheat_figure = read_bist.plot_rx_z_line_heatmap(
-                        bist,
-                        save_figs=False,
-                        output_dir=self.output_dir,
-                        return_fig=True,
-                        gui_mode=True
-                    )
-                    self._append_rx_channel_plots_by_test(
-                        heatmap_figure, lineheat_figure, bist, fname_str, freq_labels)
+                    if not history_only:
+                        heatmap_figure = read_bist.plot_rx_z(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
+                        lineheat_figure = read_bist.plot_rx_z_line_heatmap(
+                            bist,
+                            save_figs=False,
+                            output_dir=self.output_dir,
+                            return_fig=True,
+                            gui_mode=True
+                        )
+                        self._append_rx_channel_plots_by_test(
+                            heatmap_figure, lineheat_figure, bist, fname_str, freq_labels)
 
-                    # Generate the third plot (history) using plot_rx_z_history
+                    # Generate the history plot using plot_rx_z_history
                     history_figure = read_bist.plot_rx_z_history(bist, save_figs=False, output_dir=self.output_dir, return_fig=True, gui_mode=True)
                     self._append_rx_channel_plot_results(
                         history_figure, bist, 'history', fname_str, freq_labels)

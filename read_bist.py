@@ -1502,13 +1502,20 @@ def plot_rx_z_history(z, save_figs=True, output_dir=os.getcwd(), return_fig=Fals
         legend_artists.append(line)  # add line artist to legend list
         legend_labels.append('Last')
 
-        # set legend
-        l1 = ax1.legend(legend_artists, legend_labels,
-                        bbox_to_anchor=(1.2, 1), borderaxespad=0,
-                        loc='upper right', fontsize=axfsize)
-        l2 = ax2.legend(legend_artists, legend_labels,
-                        bbox_to_anchor=(1.2, 1), borderaxespad=0,
-                        loc='upper right', fontsize=axfsize)
+        # Export keeps the legend outside the axes; the saved image includes it.
+        # On screen that anchor sits past the window edge, so keep it inside the axes.
+        if gui_mode:
+            l1 = ax1.legend(legend_artists, legend_labels,
+                            loc='upper right', fontsize=axfsize)
+            l2 = ax2.legend(legend_artists, legend_labels,
+                            loc='upper right', fontsize=axfsize)
+        else:
+            l1 = ax1.legend(legend_artists, legend_labels,
+                            bbox_to_anchor=(1.2, 1), borderaxespad=0,
+                            loc='upper right', fontsize=axfsize)
+            l2 = ax2.legend(legend_artists, legend_labels,
+                            bbox_to_anchor=(1.2, 1), borderaxespad=0,
+                            loc='upper right', fontsize=axfsize)
         # legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 
         if yrmin == yrmax:
