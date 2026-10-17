@@ -267,6 +267,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_default = '0'
         self._ignore_sis5_user_disabled_on_sog = False
         self._ignore_sis5_syncing = False
+        self._transient_filter_syncing = False
+        self._transient_filter_applied = None
+        self._active_transient_threshold = None
         self._sn_user_entered = False
         self._model_user_entered = False
         self._date_user_entered = False
@@ -321,6 +324,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.clear_type_btn.clicked.connect(self.clear_bist)
         # self.verify_bist_btn.clicked.connect(self.verify_system_info)
         self.plot_bist_btn.clicked.connect(self.plot_bist)
+        self.transient_filter_chk.stateChanged.connect(self._on_transient_filter_changed)
+        self.transient_db_tb.editingFinished.connect(self._on_transient_filter_changed)
+        self.remove_nulls_chk.stateChanged.connect(self._on_remove_nulls_changed)
         # self.custom_info_chk.stateChanged(self.custom_info_gb.setEnabled(self.custom_info_chk.isChecked()))
 
         # System info: commit on Enter (text) or dropdown selection (model); then refresh plots
@@ -995,6 +1001,35 @@ class MainWindow(QtWidgets.QMainWindow):
         plot_gb.setFixedWidth(315)
         left_column.addWidget(plot_gb)
 
+        filter_gb = QtWidgets.QGroupBox('RX Noise Filtering')
+        filter_gb.setFixedWidth(315)
+        filter_row = QtWidgets.QHBoxLayout()
+        filter_row.setContentsMargins(8, 4, 8, 4)
+        self.transient_filter_chk = CheckBox(
+            'Transient Filter', False, 'transient_filter_chk',
+            'Flag an RX noise test as a bad transient when the average level of all of its modules is above this dB value')
+        self.transient_db_tb = LineEdit(
+            '70', 55, 20, 'transient_db_tb',
+            'dB threshold. A test at this level is kept; a test above it is a bad transient')
+        self.transient_db_tb.setEnabled(False)
+        self.transient_db_lbl = Label('dB', 24, 20, 'transient_db_lbl')
+        filter_row.addWidget(self.transient_filter_chk)
+        filter_row.addWidget(self.transient_db_tb)
+        filter_row.addWidget(self.transient_db_lbl)
+        filter_row.addStretch(1)
+        null_row = QtWidgets.QHBoxLayout()
+        null_row.setContentsMargins(8, 0, 8, 4)
+        self.remove_nulls_chk = CheckBox(
+            'Remove Null Values', True, 'remove_nulls_chk',
+            'Leave RX noise module readings at or below 0 dB out of every RX noise plot. Does not add a chart.')
+        null_row.addWidget(self.remove_nulls_chk)
+        null_row.addStretch(1)
+        filter_layout = QtWidgets.QVBoxLayout()
+        filter_layout.addLayout(filter_row)
+        filter_layout.addLayout(null_row)
+        filter_gb.setLayout(filter_layout)
+        left_column.addWidget(filter_gb)
+
         self.log_gb.setMinimumWidth(0)
         self.log_gb.setFixedWidth(315)
         self.log_gb.setMinimumHeight(260)
@@ -1548,6 +1583,106 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(result, tuple):
             result = result[0]
 
+    def _remember_transient_filter_applied(self):
+        self._transient_filter_applied = (
+            self.transient_filter_chk.isChecked(),
+            self.transient_db_tb.text().strip())
+
+    def _transient_threshold_db(self):
+        """Threshold used for this plot, or None when the filter is off or the value is not numeric."""
+        if not self.transient_filter_chk.isChecked():
+            return None
+        text = self.transient_db_tb.text().strip()
+        try:
+            return float(text)
+        except ValueError:
+            self.update_log('Transient filter: enter a numeric dB threshold')
+            return None
+
+    def _on_transient_filter_changed(self, *_args):
+        checked = self.transient_filter_chk.isChecked()
+        self.transient_db_tb.setEnabled(checked)
+        if self._transient_filter_syncing:
+            return
+        applied = (checked, self.transient_db_tb.text().strip())
+        if applied == self._transient_filter_applied:
+            return
+        self._remember_transient_filter_applied()
+        if self.type_cbox.currentIndex() != 2:
+            return
+        if not getattr(self, 'all_figures', None):
+            return
+        if not self.file_list.selectedItems():
+            return
+        self.plot_bist()
+
+    def _on_remove_nulls_changed(self, *_args):
+        if self._transient_filter_syncing:
+            return
+        if self.type_cbox.currentIndex() != 2:
+            return
+        if not getattr(self, 'all_figures', None):
+            return
+        if not self.file_list.selectedItems():
+            return
+        self.plot_bist()
+
+    def _transient_freq_label(self, bist):
+        try:
+            freq = bist['frequency'][0][0]
+        except Exception:
+            return ''
+        if isinstance(freq, (list, tuple)):
+            freq = freq[0] if freq else ''
+        return str(freq).strip()
+
+    def _iter_transient_variants(self, bist, param):
+        """(tag, bist, param) pairs. One untagged pair unless a test is above the threshold."""
+        threshold = self._active_transient_threshold
+        if threshold is None:
+            return [('', bist, param)]
+        bad = read_bist.transient_test_indexes(bist, threshold)
+        total = read_bist.rx_noise_test_count(bist)
+        freq = self._transient_freq_label(bist)
+        where = f' ({freq})' if freq else ''
+        if not bad:
+            self.update_log(f'Transient filter{where}: no tests above {threshold:g} dB')
+            return [('', bist, param)]
+        filtered_bist, filtered_param = read_bist.drop_rx_noise_tests(bist, param, bad)
+        raw = copy.deepcopy(bist)
+        raw['title_suffix'] = 'Raw'
+        if filtered_bist is None:
+            self.update_log(
+                f'Transient filter{where}: all {total} tests are above {threshold:g} dB; showing raw data only')
+            return [('Raw', raw, param)]
+        filtered_bist['title_suffix'] = 'Filtered'
+        self.update_log(f'Transient filter{where}: {len(bad)} of {total} tests above {threshold:g} dB')
+        return [('Raw', raw, param), ('Filtered', filtered_bist, filtered_param)]
+
+    def _emit_rx_noise_charts(self, bist, param, plot_data, base_name, make_figure, source_fn=None):
+        """Add the usual chart, or a Raw chart and a Filtered chart when tests are flagged."""
+        names = []
+        for tag, bist_i, param_i in self._iter_transient_variants(bist, param):
+            if self.remove_nulls_chk.isChecked():
+                bist_i = read_bist.mask_rx_noise_nulls(bist_i)
+            data = dict(plot_data)
+            data['bist'] = bist_i
+            data['param'] = param_i
+            result = make_figure(bist_i, param_i)
+            figure = result[0] if isinstance(result, tuple) else result
+            if figure is None:
+                continue
+            self.frequency_data.append(data)
+            self.all_figures.append(figure)
+            label = f'{base_name} ({tag})' if tag else str(base_name)
+            names.append(label)
+            if source_fn is not None and self._append_binned_source_heatmap(data, source_fn):
+                if tag:
+                    names.append(f'{base_name} ({tag}, BISTs)')
+                else:
+                    names.append(f'{base_name} (BISTs)')
+        return names
+
     def _append_binned_source_heatmap(self, plot_data, plot_fn):
         """Add the binned plot plus the heatmap of BISTs that filled each bin."""
         source_data = dict(plot_data)
@@ -1753,6 +1888,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 'custom_interval': self.prm_int_tb.text(),
                 'custom_tests_per_interval': self.num_tests_tb.text(),
                 'custom_total_tests': self.total_num_tests_tb.text(),
+                'transient_filter': self.transient_filter_chk.isChecked(),
+                'transient_filter_db': self.transient_db_tb.text().strip(),
+                'remove_null_values': self.remove_nulls_chk.isChecked(),
             },
         }
         if self._analysis_colormap_uses_center(colormap):
@@ -1911,6 +2049,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.binned_individual_cb.setCurrentIndex(individual_index)
         if 'parse_test_params' in params:
             self.parse_test_params_gb.setChecked(bool(params['parse_test_params']))
+        self._transient_filter_syncing = True
+        try:
+            if 'transient_filter' in params:
+                self.transient_filter_chk.setChecked(bool(params['transient_filter']))
+            if params.get('transient_filter_db') is not None:
+                self.transient_db_tb.setText(str(params['transient_filter_db']))
+            self.transient_db_tb.setEnabled(self.transient_filter_chk.isChecked())
+            if 'remove_null_values' in params:
+                self.remove_nulls_chk.setChecked(bool(params['remove_null_values']))
+            self._remember_transient_filter_applied()
+        finally:
+            self._transient_filter_syncing = False
         self.current_tb.setText(str(params.get('current_kt', self.current_tb.text())))
         current_index = self.current_dir_cbox.findText(params.get('current_direction', ''))
         if current_index >= 0:
@@ -3358,6 +3508,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._update_export_button(mark_pending=True)
 
             elif bist_test_type == self.bist_list[3]:  # RX Noise
+                self._active_transient_threshold = self._transient_threshold_db()
+                self._remember_transient_filter_applied()
                 freq_list = bist['frequency'][0][0]  # freq list; assume identical across all files
                 # print('freq_list=', freq_list)
                 # print('bist=', bist)
@@ -3470,32 +3622,27 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'description': self.cruise_name,
                                 'date': self.date_str
                             }
-                            self.frequency_data.append(plot_data)
-                            
-                            # Generate and display the plot
-                            figure_result = read_bist.plot_rx_noise_binned_new(bist, save_figs=False,
-                                                                     output_dir=self.output_dir,
-                                                                     test_type=plot_test_type,
-                                                                     param=param_list,
-                                                                     param_unit=self.prm_unit_cbox.currentText(),
-                                                                     param_adjust=param_adjust,
-                                                                     param_lims=param_lims,
-                                                                     binned_range_lims=binned_range_lims,
-                                                                     error_bar_type=self.binned_error_type_cb.currentText(),
-                                                                     individual_type=self.binned_individual_cb.currentText(),
-                                                                     sort=sort_order,
-                                                                     return_fig=True)
-                            # Extract figure from tuple (binned functions return (fig, data_dict))
-                            if isinstance(figure_result, tuple):
-                                figure = figure_result[0]
-                            else:
-                                figure = figure_result
-                            self.all_figures.append(figure)
                             base_name = str(freq_list[0]) if freq_list else 'Binned'
-                            self.freq_list = [base_name]
-                            if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_new):
-                                self.freq_list.append(f'{base_name} (BISTs)')
+                            self.freq_list = self._emit_rx_noise_charts(
+                                bist, param_list, plot_data, base_name,
+                                lambda bist_i, param_i: read_bist.plot_rx_noise_binned_new(
+                                    bist_i, save_figs=False,
+                                    output_dir=self.output_dir,
+                                    test_type=plot_test_type,
+                                    param=param_i,
+                                    param_unit=self.prm_unit_cbox.currentText(),
+                                    param_adjust=param_adjust,
+                                    param_lims=param_lims,
+                                    binned_range_lims=binned_range_lims,
+                                    error_bar_type=self.binned_error_type_cb.currentText(),
+                                    individual_type=self.binned_individual_cb.currentText(),
+                                    sort=sort_order,
+                                    return_fig=True),
+                                source_fn=read_bist.plot_rx_noise_binned_new)
                             self.total_charts = len(self.all_figures)
+                            if not self.all_figures:
+                                self.update_log('No binned RX noise plot was created')
+                                return
                             
                             # Display the plot in GUI
                             self.display_current_frequency()
@@ -3545,30 +3692,22 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'individual_type': self.binned_individual_cb.currentText(),
                                     'plot_function': read_bist.plot_rx_noise_binned_new,
                                 }
-                                self.frequency_data.append(plot_data)
-                                
-                                # Generate the plot
-                                figure_result = read_bist.plot_rx_noise_binned_new(bist_freq, save_figs=False,
-                                                                         output_dir=self.output_dir,
-                                                                         test_type=plot_test_type,
-                                                                         param=param_list,
-                                                                         param_unit=self.prm_unit_cbox.currentText(),
-                                                                         param_adjust=param_adjust,
-                                                                         param_lims=param_lims,
-                                                                         binned_range_lims=binned_range_lims,
-                                                                         error_bar_type=self.binned_error_type_cb.currentText(),
-                                                                         individual_type=self.binned_individual_cb.currentText(),
-                                                                         sort=sort_order,
-                                                                         return_fig=True)
-                                # Extract figure from tuple (binned functions return (fig, data_dict))
-                                if isinstance(figure_result, tuple):
-                                    figure = figure_result[0]
-                                else:
-                                    figure = figure_result
-                                self.all_figures.append(figure)
-                                chart_names.append(str(freq_list[f]))
-                                if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_new):
-                                    chart_names.append(f'{freq_list[f]} (BISTs)')
+                                chart_names.extend(self._emit_rx_noise_charts(
+                                    bist_freq, param_list, plot_data, str(freq_list[f]),
+                                    lambda bist_i, param_i: read_bist.plot_rx_noise_binned_new(
+                                        bist_i, save_figs=False,
+                                        output_dir=self.output_dir,
+                                        test_type=plot_test_type,
+                                        param=param_i,
+                                        param_unit=self.prm_unit_cbox.currentText(),
+                                        param_adjust=param_adjust,
+                                        param_lims=param_lims,
+                                        binned_range_lims=binned_range_lims,
+                                        error_bar_type=self.binned_error_type_cb.currentText(),
+                                        individual_type=self.binned_individual_cb.currentText(),
+                                        sort=sort_order,
+                                        return_fig=True),
+                                    source_fn=read_bist.plot_rx_noise_binned_new))
                                 
                             except Exception as e:
                                 self.update_log(f'Error generating binned plot for frequency {f}: {str(e)}')
@@ -3625,32 +3764,27 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'description': self.cruise_name,
                                 'date': self.date_str
                             }
-                            self.frequency_data.append(plot_data)
-                            
-                            # Generate and display the plot
-                            figure_result = read_bist.plot_rx_noise_binned_2kt(bist, save_figs=False,
-                                                                     output_dir=self.output_dir,
-                                                                     test_type=plot_test_type,
-                                                                     param=param_list,
-                                                                     param_unit=self.prm_unit_cbox.currentText(),
-                                                                     param_adjust=param_adjust,
-                                                                     param_lims=param_lims,
-                                                                     binned_range_lims=binned_range_lims,
-                                                                     error_bar_type=self.binned_error_type_cb.currentText(),
-                                                                     individual_type=self.binned_individual_cb.currentText(),
-                                                                     sort=sort_order,
-                                                                     return_fig=True)
-                            # Extract figure from tuple (binned functions return (fig, data_dict))
-                            if isinstance(figure_result, tuple):
-                                figure = figure_result[0]
-                            else:
-                                figure = figure_result
-                            self.all_figures.append(figure)
                             base_name = str(freq_list[0]) if freq_list else 'Binned'
-                            self.freq_list = [base_name]
-                            if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_2kt):
-                                self.freq_list.append(f'{base_name} (BISTs)')
+                            self.freq_list = self._emit_rx_noise_charts(
+                                bist, param_list, plot_data, base_name,
+                                lambda bist_i, param_i: read_bist.plot_rx_noise_binned_2kt(
+                                    bist_i, save_figs=False,
+                                    output_dir=self.output_dir,
+                                    test_type=plot_test_type,
+                                    param=param_i,
+                                    param_unit=self.prm_unit_cbox.currentText(),
+                                    param_adjust=param_adjust,
+                                    param_lims=param_lims,
+                                    binned_range_lims=binned_range_lims,
+                                    error_bar_type=self.binned_error_type_cb.currentText(),
+                                    individual_type=self.binned_individual_cb.currentText(),
+                                    sort=sort_order,
+                                    return_fig=True),
+                                source_fn=read_bist.plot_rx_noise_binned_2kt)
                             self.total_charts = len(self.all_figures)
+                            if not self.all_figures:
+                                self.update_log('No 2kt binned RX noise plot was created')
+                                return
                             
                             # Display the plot in GUI
                             self.display_current_frequency()
@@ -3700,30 +3834,22 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'individual_type': self.binned_individual_cb.currentText(),
                                     'plot_function': read_bist.plot_rx_noise_binned_2kt,
                                 }
-                                self.frequency_data.append(plot_data)
-                                
-                                # Generate the plot
-                                figure_result = read_bist.plot_rx_noise_binned_2kt(bist_freq, save_figs=False,
-                                                                         output_dir=self.output_dir,
-                                                                         test_type=plot_test_type,
-                                                                         param=param_list,
-                                                                         param_unit=self.prm_unit_cbox.currentText(),
-                                                                         param_adjust=param_adjust,
-                                                                         param_lims=param_lims,
-                                                                         binned_range_lims=binned_range_lims,
-                                                                         error_bar_type=self.binned_error_type_cb.currentText(),
-                                                                         individual_type=self.binned_individual_cb.currentText(),
-                                                                         sort=sort_order,
-                                                                         return_fig=True)
-                                # Extract figure from tuple (binned functions return (fig, data_dict))
-                                if isinstance(figure_result, tuple):
-                                    figure = figure_result[0]
-                                else:
-                                    figure = figure_result
-                                self.all_figures.append(figure)
-                                chart_names.append(str(freq_list[f]))
-                                if self._append_binned_source_heatmap(plot_data, read_bist.plot_rx_noise_binned_2kt):
-                                    chart_names.append(f'{freq_list[f]} (BISTs)')
+                                chart_names.extend(self._emit_rx_noise_charts(
+                                    bist_freq, param_list, plot_data, str(freq_list[f]),
+                                    lambda bist_i, param_i: read_bist.plot_rx_noise_binned_2kt(
+                                        bist_i, save_figs=False,
+                                        output_dir=self.output_dir,
+                                        test_type=plot_test_type,
+                                        param=param_i,
+                                        param_unit=self.prm_unit_cbox.currentText(),
+                                        param_adjust=param_adjust,
+                                        param_lims=param_lims,
+                                        binned_range_lims=binned_range_lims,
+                                        error_bar_type=self.binned_error_type_cb.currentText(),
+                                        individual_type=self.binned_individual_cb.currentText(),
+                                        sort=sort_order,
+                                        return_fig=True),
+                                    source_fn=read_bist.plot_rx_noise_binned_2kt))
                                 
                             except Exception as e:
                                 self.update_log(f'Error generating 2kt binned plot for frequency {f}: {str(e)}')
@@ -3785,32 +3911,27 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'description': self.cruise_name,
                                 'date': self.date_str
                             }
-                            self.frequency_data.append(plot_data)
-                            
-                            # Generate the plot
-                            figure_result = discrete_plot_fn(bist, save_figs=False,
-                                                                         output_dir=self.output_dir,
-                                                                         test_type=plot_test_type,
-                                                                         param=param_list,
-                                                                         param_unit=self.prm_unit_cbox.currentText(),
-                                                                         param_adjust=param_adjust,
-                                                                         param_lims=param_lims,
-                                                                         binned_range_lims=binned_range_lims,
-                                                                         error_bar_type=self.binned_error_type_cb.currentText(),
-                                                                         individual_type=self.binned_individual_cb.currentText(),
-                                                                         sort=sort_order,
-                                                                         return_fig=True)
-                            # Extract figure from tuple (binned functions return (fig, data_dict))
-                            if isinstance(figure_result, tuple):
-                                figure = figure_result[0]
-                            else:
-                                figure = figure_result
-                            self.all_figures.append(figure)
                             base_name = str(freq_list[0]) if freq_list else 'Binned'
-                            self.freq_list = [base_name]
-                            if self._append_binned_source_heatmap(plot_data, discrete_plot_fn):
-                                self.freq_list.append(f'{base_name} (BISTs)')
+                            self.freq_list = self._emit_rx_noise_charts(
+                                bist, param_list, plot_data, base_name,
+                                lambda bist_i, param_i, plot_fn=discrete_plot_fn: plot_fn(
+                                    bist_i, save_figs=False,
+                                    output_dir=self.output_dir,
+                                    test_type=plot_test_type,
+                                    param=param_i,
+                                    param_unit=self.prm_unit_cbox.currentText(),
+                                    param_adjust=param_adjust,
+                                    param_lims=param_lims,
+                                    binned_range_lims=binned_range_lims,
+                                    error_bar_type=self.binned_error_type_cb.currentText(),
+                                    individual_type=self.binned_individual_cb.currentText(),
+                                    sort=sort_order,
+                                    return_fig=True),
+                                source_fn=discrete_plot_fn)
                             self.total_charts = len(self.all_figures)
+                            if not self.all_figures:
+                                self.update_log(f'No {discrete_label} binned RX noise plot was created')
+                                return
                             
                             # Display the plot in GUI
                             self.display_current_frequency()
@@ -3867,30 +3988,22 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'description': self.cruise_name,
                                     'date': self.date_str
                                 }
-                                self.frequency_data.append(plot_data)
-                                
-                                # Generate the plot for this frequency
-                                figure_result = discrete_plot_fn(bist_freq, save_figs=False,
-                                                                         output_dir=self.output_dir,
-                                                                         test_type=plot_test_type,
-                                                                         param=param_list,
-                                                                         param_unit=self.prm_unit_cbox.currentText(),
-                                                                         param_adjust=param_adjust,
-                                                                         param_lims=param_lims,
-                                                                         binned_range_lims=binned_range_lims,
-                                                                         error_bar_type=self.binned_error_type_cb.currentText(),
-                                                                         individual_type=self.binned_individual_cb.currentText(),
-                                                                         sort=sort_order,
-                                                                         return_fig=True)
-                                # Extract figure from tuple (binned functions return (fig, data_dict))
-                                if isinstance(figure_result, tuple):
-                                    figure = figure_result[0]
-                                else:
-                                    figure = figure_result
-                                self.all_figures.append(figure)
-                                chart_names.append(str(f))
-                                if self._append_binned_source_heatmap(plot_data, discrete_plot_fn):
-                                    chart_names.append(f'{f} (BISTs)')
+                                chart_names.extend(self._emit_rx_noise_charts(
+                                    bist_freq, param_list, plot_data, str(f),
+                                    lambda bist_i, param_i, plot_fn=discrete_plot_fn: plot_fn(
+                                        bist_i, save_figs=False,
+                                        output_dir=self.output_dir,
+                                        test_type=plot_test_type,
+                                        param=param_i,
+                                        param_unit=self.prm_unit_cbox.currentText(),
+                                        param_adjust=param_adjust,
+                                        param_lims=param_lims,
+                                        binned_range_lims=binned_range_lims,
+                                        error_bar_type=self.binned_error_type_cb.currentText(),
+                                        individual_type=self.binned_individual_cb.currentText(),
+                                        sort=sort_order,
+                                        return_fig=True),
+                                    source_fn=discrete_plot_fn))
                                 
                             except Exception as e:
                                 self.update_log(f'Error generating {discrete_label} binned plot for frequency {f}: {str(e)}')
@@ -3938,28 +4051,32 @@ class MainWindow(QtWidgets.QMainWindow):
                                 'sort': self.sort_cbox.currentText().lower().strip(),
                                 'redblue_center': self.redblue_center_spin.value()
                             }
-                            self.frequency_data.append(plot_data)
-                            
-                            # Generate and display the plot
-                            figure = read_bist.plot_rx_noise(bist, save_figs=False,
-                                                                     output_dir=self.output_dir,
-                                                                     test_type=self._rx_noise_plot_test_type(test_type),
-                                                                     param=param_list,
-                                                                     param_unit=self.prm_unit_cbox.currentText(),
-                                                                     param_adjust=param_adjust,
-                                                                     param_lims=param_lims,
-                                                                     noise_lims=noise_lims,
-                                                                     cmap=self.cmap_cbox.currentText().lower().strip(),
-                                                                     sort=self.sort_cbox.currentText().lower().strip(),
-                                                                     redblue_center=self.redblue_center_spin.value(),
-                                                                     return_fig=True,
-                                                                     gui_embed=True)
-                            self.all_figures.append(figure)
-                            
+                            base_name = str(freq_list[0]) if freq_list else 'RX Noise'
+                            self.freq_list = self._emit_rx_noise_charts(
+                                bist, param_list, plot_data, base_name,
+                                lambda bist_i, param_i: read_bist.plot_rx_noise(
+                                    bist_i, save_figs=False,
+                                    output_dir=self.output_dir,
+                                    test_type=self._rx_noise_plot_test_type(test_type),
+                                    param=param_i,
+                                    param_unit=self.prm_unit_cbox.currentText(),
+                                    param_adjust=param_adjust,
+                                    param_lims=param_lims,
+                                    noise_lims=noise_lims,
+                                    cmap=self.cmap_cbox.currentText().lower().strip(),
+                                    sort=self.sort_cbox.currentText().lower().strip(),
+                                    redblue_center=self.redblue_center_spin.value(),
+                                    return_fig=True,
+                                    gui_embed=True))
+                            self.total_charts = len(self.all_figures)
+                            if not self.all_figures:
+                                self.update_log('No RX noise plot was created')
+                                return
+
                             # Display the plot and set up navigation
                             self.display_current_frequency()
                             self.update_navigation_controls()
-                            self.update_log(f"Generated single chart for {freq_list[0]}")
+                            self.update_log(f"Generated {len(self.all_figures)} chart(s) for {freq_list[0]}")
                         except Exception as e:
                             self.update_log(f"Error generating single chart: {str(e)}")
 
@@ -3969,9 +4086,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         # Initialize storage for all frequency plots
                         self.all_figures = []
                         self.frequency_data = []
-                        self.freq_list = freq_list
-                        self.total_charts = len(freq_list)
+                        self.freq_list = []
+                        self.total_charts = 0
                         self.current_chart_index = 0
+                        chart_names = []
                         
                         for f in range(len(freq_list)):
                             print('f=', f)
@@ -4011,24 +4129,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                     'sort': self.sort_cbox.currentText().lower().strip(),
                                     'redblue_center': self.redblue_center_spin.value()
                                 }
-                                self.frequency_data.append(plot_data)
-                                
-                                # Create the plot and get the figure
-                                figure = read_bist.plot_rx_noise(bist_freq, save_figs=False,
-                                                                         output_dir=self.output_dir,
-                                                                         test_type=self._rx_noise_plot_test_type(test_type),
-                                                                         param=param_list,  # [] if unspecified
-                                                                         param_unit=param_unit,
-                                                                         param_adjust=param_adjust,
-                                                                         param_lims=param_lims,
-                                                                         noise_lims=noise_lims,
-                                                                         cmap=self.cmap_cbox.currentText().lower().strip(),
-                                                                         sort=self.sort_cbox.currentText().lower().strip(),
-                                                                         redblue_center=self.redblue_center_spin.value(),
-                                                                         return_fig=True,
-                                                                         gui_embed=True)
-                                self.all_figures.append(figure)
-                                self.update_log(f"Generated chart for frequency {freq_list[f]}")
+                                names = self._emit_rx_noise_charts(
+                                    bist_freq, param_list, plot_data, str(freq_list[f]),
+                                    lambda bist_i, param_i: read_bist.plot_rx_noise(
+                                        bist_i, save_figs=False,
+                                        output_dir=self.output_dir,
+                                        test_type=self._rx_noise_plot_test_type(test_type),
+                                        param=param_i,
+                                        param_unit=param_unit,
+                                        param_adjust=param_adjust,
+                                        param_lims=param_lims,
+                                        noise_lims=noise_lims,
+                                        cmap=self.cmap_cbox.currentText().lower().strip(),
+                                        sort=self.sort_cbox.currentText().lower().strip(),
+                                        redblue_center=self.redblue_center_spin.value(),
+                                        return_fig=True,
+                                        gui_embed=True))
+                                chart_names.extend(names)
+                                self.update_log(f"Generated {len(names)} chart(s) for frequency {freq_list[f]}")
                             except Exception as e:
                                 self.update_log(f"Error generating chart for frequency {freq_list[f]}: {str(e)}")
                                 # Create a placeholder figure if plotting fails
@@ -4036,6 +4154,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                 plt.text(0.5, 0.5, f'Error plotting chart for frequency {freq_list[f]}', 
                                         ha='center', va='center', transform=plt.gca().transAxes)
                                 self.all_figures.append(placeholder_fig)
+                                chart_names.append(str(freq_list[f]))
+                        self.freq_list = chart_names
+                        self.total_charts = len(self.all_figures)
                         
                         # Display the first frequency plot and set up navigation
                         if self.all_figures:

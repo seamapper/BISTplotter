@@ -27,6 +27,7 @@ import datetime
 import re
 import os
 import math
+import copy
 import traceback
 
 
@@ -2783,7 +2784,7 @@ def _attach_rx_noise_speed_hover_tooltip(fig, ax_im, im, rxn_all, param_all, par
         row_i, col_j = idx
         param_val = float(param_all[col_j])
         noise_val = rxn_all[row_i, col_j]
-        if np.ma.is_masked(noise_val):
+        if np.ma.is_masked(noise_val) or not np.isfinite(noise_val):
             noise_str = 'N/A'
         else:
             noise_str = f'{float(noise_val):.2f} dB'
@@ -2960,6 +2961,178 @@ def attach_rx_channel_hover(fig, canvas=None):
         return
     _ax_im, im, rx_data = payload
     _attach_rx_channel_hover_tooltip(fig, im, rx_data, canvas=canvas)
+
+
+def _rxn_file_test_count(file_rxn):
+    """Number of tests in one file, using the same axis the RX noise plotter walks."""
+    return int(np.size(file_rxn, axis=0))
+
+
+def iter_rx_noise_tests(rxn):
+    """Yield each test as (flat index, file index, local index, module values)."""
+    data = (rxn or {}).get('rxn') or []
+    flat = 0
+    for i in range(len(data)):
+        file_rxn = data[i]
+        n_local = _rxn_file_test_count(file_rxn)
+        for j in range(n_local):
+            values = np.ravel(np.transpose(file_rxn[j]))
+            yield flat, i, j, values
+            flat += 1
+
+
+def rx_noise_test_count(rxn):
+    return sum(1 for _ in iter_rx_noise_tests(rxn))
+
+
+def rx_noise_test_level_db(values):
+    """Power mean of module levels, in dB. Empty or non-finite data has no level."""
+    values = np.asarray(values, dtype=float).ravel()
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return None
+    mean_linear = np.mean(np.power(10.0, values / 10.0))
+    if not np.isfinite(mean_linear) or mean_linear <= 0:
+        return None
+    return float(10.0 * np.log10(mean_linear))
+
+
+def transient_test_indexes(rxn, threshold_db):
+    """Flat indexes of tests whose module power mean is above the threshold."""
+    threshold = float(threshold_db)
+    bad = []
+    for flat, _i, _j, values in iter_rx_noise_tests(rxn):
+        level = rx_noise_test_level_db(values)
+        if level is not None and level > threshold:
+            bad.append(flat)
+    return bad
+
+
+def _filter_parallel_sequence(seq, bad, total):
+    """Drop flat indexes from a nested list that lines up with the test count."""
+    if not isinstance(seq, list):
+        return None
+    flat_i = 0
+    new_seq = []
+    for part in seq:
+        if isinstance(part, np.ndarray):
+            if part.ndim != 1:
+                return None
+            n = int(part.size)
+            kept = [part[k] for k in range(n) if (flat_i + k) not in bad]
+            flat_i += n
+            if kept:
+                new_seq.append(np.asarray(kept))
+        elif isinstance(part, list):
+            n = len(part)
+            kept = [part[k] for k in range(n) if (flat_i + k) not in bad]
+            flat_i += n
+            if kept:
+                new_seq.append(kept)
+        else:
+            if flat_i not in bad:
+                new_seq.append(part)
+            flat_i += 1
+    if flat_i != total:
+        return None
+    return new_seq
+
+
+def drop_rx_noise_tests(rxn, param, bad_indexes):
+    """Return bist and param with the flagged tests removed.
+
+    Per-test sequences (speed, azimuth, test number, and a flat custom param
+    list) lose the same indexes. A file with no tests left is removed.
+    Returns (None, None) when every test is flagged.
+    """
+    bad = set(int(i) for i in bad_indexes)
+    if not bad:
+        return copy.deepcopy(rxn), param
+
+    out = copy.deepcopy(rxn)
+    total = 0
+    file_kept = []
+    new_rxn = []
+    keep_flat = []
+    for file_rxn in out.get('rxn') or []:
+        n_local = _rxn_file_test_count(file_rxn)
+        kept_idx = []
+        for j in range(n_local):
+            if total not in bad:
+                kept_idx.append(j)
+                keep_flat.append(total)
+            total += 1
+        file_kept.append(kept_idx)
+        if not kept_idx:
+            continue
+        if isinstance(file_rxn, np.ndarray):
+            new_rxn.append(file_rxn[kept_idx])
+        else:
+            new_rxn.append([file_rxn[j] for j in kept_idx])
+
+    if not keep_flat:
+        return None, None
+
+    out['rxn'] = new_rxn
+    n_files = len(file_kept)
+    remaining_files = [i for i, kept in enumerate(file_kept) if kept]
+    for key, value in list(out.items()):
+        if key == 'rxn' or not isinstance(value, list):
+            continue
+        filtered = _filter_parallel_sequence(value, bad, total)
+        if filtered is not None:
+            out[key] = filtered
+        elif len(value) == n_files:
+            out[key] = [value[i] for i in remaining_files]
+
+    new_param = param
+    if param is not None:
+        try:
+            n_param = len(param)
+        except TypeError:
+            n_param = 0
+        if n_param and n_param == total:
+            if isinstance(param, np.ndarray):
+                new_param = param[keep_flat]
+            else:
+                new_param = [param[i] for i in keep_flat]
+    return out, new_param
+
+
+def mask_rx_noise_nulls(rxn):
+    """Copy *rxn* and set module levels at or below 0 dB to NaN.
+
+    Tests stay in place. The transient filter still sees the original values.
+    """
+    out = copy.deepcopy(rxn)
+    masked = []
+    for file_rxn in out.get('rxn') or []:
+        n_local = _rxn_file_test_count(file_rxn)
+        if isinstance(file_rxn, np.ndarray):
+            data = np.array(file_rxn, dtype=float, copy=True)
+            data[~(data > 0)] = np.nan
+            masked.append(data)
+            continue
+        tests = []
+        for j in range(n_local):
+            test = np.array(file_rxn[j], dtype=float, copy=True)
+            test[~(test > 0)] = np.nan
+            tests.append(test)
+        masked.append(tests)
+    out['rxn'] = masked
+    return out
+
+
+def _rx_noise_module_mean_db(rxn_local):
+    """Binned-plot mean of one test, ignoring null modules. None when none remain."""
+    values = np.asarray(rxn_local, dtype=float).ravel()
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return None
+    mean_linear = np.mean(np.power(10.0, values / 20.0))
+    if not np.isfinite(mean_linear) or mean_linear <= 0:
+        return None
+    return float(20.0 * np.log10(mean_linear))
 
 
 # plot RX Noise versus speed or azimuth
@@ -3196,6 +3369,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
             colormap = plt.get_cmap(cmap).copy()
         colormap.set_under(color='black')  # Black for values < vmin
         colormap.set_over(color='magenta')  # Magenta for values > vmax
+        colormap.set_bad(color='white')  # Null module readings are left blank
         
         im = ax2.imshow(rxn_all, cmap=colormap, aspect='auto', vmin=vmin, vmax=vmax)
         # im = ax2.imshow(rxn_all, cmap=cmap, aspect='auto', vmin=30, vmax=80, )
@@ -3217,6 +3391,7 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
                 colormap = plt.get_cmap(cmap).copy()
             colormap.set_under(color='black')
             colormap.set_over(color='magenta')
+            colormap.set_bad(color='white')
             im = ax2.imshow(rxn_all, cmap=colormap, aspect='auto', vmin=vmin, vmax=vmax)
         except Exception as e2:
             print(f"Warning: Could not create imshow plot with vmin/vmax: {e2}")
@@ -3414,9 +3589,11 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
     except Exception:
         freq_title = 'Unknown'
 
-    title_str = ('RX Noise vs. ' + test_type.capitalize() + '\n' +
-                 system_id_title_line(rxn) + '\n' +
-                 'Freq: ' + freq_title + plot_title_date_suffix(rxn, date_str))
+    title_str = apply_plot_title_suffix(
+        'RX Noise vs. ' + test_type.capitalize() + '\n' +
+        system_id_title_line(rxn) + '\n' +
+        'Freq: ' + freq_title + plot_title_date_suffix(rxn, date_str),
+        rxn)
     try:
         fig.suptitle(title_str, fontsize=16)
     except Exception as e:
@@ -3449,9 +3626,11 @@ def plot_rx_noise(rxn, save_figs, output_dir=os.getcwd(), sort='ascending', test
                         '_' + param_unit_str + '_' + sort
                         # (param_unit if test_type == 'speed' else '_deg')
 
-        fig_name = 'RX_noise_vs_' + test_type + '_EM' + rxn['model'][0] + \
-                   '_SN_' + rxn['sn'][0] + "_" + date_str.replace('-', '') + \
-                   "_" + freq_str + param_str + '_' + cmap + ".png"
+        fig_name = apply_plot_filename_suffix(
+            'RX_noise_vs_' + test_type + '_EM' + rxn['model'][0] +
+            '_SN_' + rxn['sn'][0] + "_" + date_str.replace('-', '') +
+            "_" + freq_str + param_str + '_' + cmap + ".png",
+            rxn)
         print('Saving', fig_name)
         try:
             fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
@@ -3649,6 +3828,35 @@ def tx_plot_date_text(z, file_index):
     if not isinstance(dates, list) or not (0 <= file_index < len(dates)):
         return ''
     return format_plot_date(dates[file_index])
+
+
+def apply_plot_title_suffix(title, z):
+    """Append a Raw/Filtered tag to the first line of a plot title."""
+    suffix = ''
+    if isinstance(z, dict):
+        suffix = str(z.get('title_suffix') or '').strip()
+    if not suffix:
+        return title
+    token = f'({suffix})'
+    if token in str(title):
+        return title
+    lines = str(title).split('\n', 1)
+    lines[0] = lines[0] + ' ' + token
+    return '\n'.join(lines)
+
+
+def apply_plot_filename_suffix(fig_name, z):
+    """Keep Raw and Filtered exports from writing the same PNG name."""
+    suffix = ''
+    if isinstance(z, dict):
+        suffix = str(z.get('title_suffix') or '').strip().lower().replace(' ', '_')
+    if not suffix:
+        return fig_name
+    root, ext = os.path.splitext(fig_name)
+    token = '_' + suffix
+    if root.endswith(token):
+        return fig_name
+    return root + token + ext
 
 
 def plot_title_date_suffix(z, raw_date=None):
@@ -4093,6 +4301,7 @@ def _rx_noise_colormap(name, vmin, vmax, redblue_center):
         colormap = plt.get_cmap(cmap).copy()
     colormap.set_under('black')
     colormap.set_over('magenta')
+    colormap.set_bad('white')
     return colormap
 
 
@@ -4271,11 +4480,11 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                 # Reshape noise data to 1D array
                 rxn_local = np.reshape(np.transpose(rxn['rxn'][i][j]), [n_elements, -1])
                 
-                # Convert dB to linear, calculate mean, convert back to dB
-                rxn_linear = 10**(rxn_local/20)  # Convert dB to linear acoustic pressure units
-                noise_mean_linear = np.mean(rxn_linear)  # Arithmetic mean of linear values
-                noise_mean = 20 * np.log10(noise_mean_linear)  # Convert back to dB
-                
+                # Null modules are NaN and stay out of the test mean.
+                noise_mean = _rx_noise_module_mean_db(rxn_local)
+                if noise_mean is None:
+                    test_idx += 1
+                    continue
                 all_noise_data.append(noise_mean)
                 all_params.append(param_val)
                 all_elements.append(np.ravel(rxn_local).astype(float))
@@ -4511,9 +4720,11 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
     
     date_suffix = plot_title_date_suffix(rxn, date_str)
     
-    title_str = f'RX Noise vs {test_type.capitalize()} (Binned)\n' + \
-                f'{system_id_title_line(rxn)}\n' + \
-                f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}'
+    title_str = apply_plot_title_suffix(
+        f'RX Noise vs {test_type.capitalize()} (Binned)\n' +
+        f'{system_id_title_line(rxn)}\n' +
+        f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}',
+        rxn)
     
     ax.set_title(title_str, fontsize=14, fontweight='bold')
     
@@ -4585,7 +4796,9 @@ def plot_rx_noise_binned_new(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         # Add _bin suffix if individual measurements are binned or both
         bin_suffix = "_bin" if individual_type in ["Binned (Cyan)", "Both (Binned + Non-binned)"] else ""
         source_suffix = "_bists" if source_heatmap else ""
-        fig_name = f'RX_noise_binned_1kt_vs_{test_type}_{error_suffix}{bin_suffix}{source_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png'
+        fig_name = apply_plot_filename_suffix(
+            f'RX_noise_binned_1kt_vs_{test_type}_{error_suffix}{bin_suffix}{source_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png',
+            rxn)
         print('Saving', fig_name)
         fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
     
@@ -4680,11 +4893,11 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
                 # Reshape noise data to 1D array
                 rxn_local = np.reshape(np.transpose(rxn['rxn'][i][j]), [n_elements, -1])
                 
-                # Convert dB to linear, calculate mean, convert back to dB
-                rxn_linear = 10**(rxn_local/20)  # Convert dB to linear acoustic pressure units
-                noise_mean_linear = np.mean(rxn_linear)  # Arithmetic mean of linear values
-                noise_mean = 20 * np.log10(noise_mean_linear)  # Convert back to dB
-                
+                # Null modules are NaN and stay out of the test mean.
+                noise_mean = _rx_noise_module_mean_db(rxn_local)
+                if noise_mean is None:
+                    test_idx += 1
+                    continue
                 all_noise_data.append(noise_mean)
                 all_params.append(param_val)
                 all_elements.append(np.ravel(rxn_local).astype(float))
@@ -4948,9 +5161,11 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
         
         date_suffix = plot_title_date_suffix(rxn, date_str)
         
-        title_str = (f'RX Noise vs {test_type.capitalize()} (Binned) - 2kt\n' +
-                    f'{system_id_title_line(rxn)}\n' +
-                    f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}')
+        title_str = apply_plot_title_suffix(
+            f'RX Noise vs {test_type.capitalize()} (Binned) - 2kt\n' +
+            f'{system_id_title_line(rxn)}\n' +
+            f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}',
+            rxn)
         
         ax.set_title(title_str, fontsize=14, fontweight='bold')
         
@@ -5009,7 +5224,9 @@ def plot_rx_noise_binned_2kt(rxn, save_figs=True, output_dir=os.getcwd(), test_t
             # Add _bin suffix if individual measurements are binned
             bin_suffix = "_bin" if individual_type == "Binned (Cyan)" else ""
             source_suffix = "_bists" if source_heatmap else ""
-            fig_name = f'RX_noise_binned_2kt_vs_{test_type}_{error_suffix}{bin_suffix}{source_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png'
+            fig_name = apply_plot_filename_suffix(
+                f'RX_noise_binned_2kt_vs_{test_type}_{error_suffix}{bin_suffix}{source_suffix}_EM{rxn["model"][0]}_SN_{rxn["sn"][0]}_{clean_date_str}_{freq_str}.png',
+                rxn)
             print('Saving', fig_name)
             fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
         
@@ -5257,11 +5474,11 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
                 # Reshape noise data to 1D array
                 rxn_local = np.reshape(np.transpose(rxn['rxn'][i][j]), [n_elements, -1])
                 
-                # Convert dB to linear, calculate mean, convert back to dB
-                rxn_linear = 10**(rxn_local/20)  # Convert dB to linear acoustic pressure units
-                noise_mean_linear = np.mean(rxn_linear)  # Arithmetic mean of linear values
-                noise_mean = 20 * np.log10(noise_mean_linear)  # Convert back to dB
-                
+                # Null modules are NaN and stay out of the test mean.
+                noise_mean = _rx_noise_module_mean_db(rxn_local)
+                if noise_mean is None:
+                    test_idx += 1
+                    continue
                 all_noise_data.append(noise_mean)
                 all_params.append(param_val)
                 all_elements.append(np.ravel(rxn_local).astype(float))
@@ -5498,9 +5715,11 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
     # Calculate total tests
     total_tests = sum(binned_counts.values()) if binned_counts else 0
     
-    title_str = (f'RX Noise vs {param_unit} (Binned)\n' +
-                f'{system_id_title_line(rxn)}\n' +
-                f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}')
+    title_str = apply_plot_title_suffix(
+        f'RX Noise vs {param_unit} (Binned)\n' +
+        f'{system_id_title_line(rxn)}\n' +
+        f'Freq: {freq_display}{date_suffix} - Total Tests: {total_tests}',
+        rxn)
     
     ax.set_title(title_str, fontsize=12, fontweight='bold', pad=20)
     ax.set_xlabel(param_unit, fontsize=12, fontweight='bold')
@@ -5531,8 +5750,10 @@ def _plot_rx_noise_binned_discrete(rxn, save_figs=True, output_dir=os.getcwd(), 
         clean_freq_display = freq_display.replace(" ", "_").replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("'", "")
         param_token = param_unit.replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'pct')
         source_suffix = "_bists" if source_heatmap else ""
-        fig_name = (f'RX_noise_binned_{param_token}_vs_RXnoise_{error_suffix}{bin_suffix}{source_suffix}_'
-                    f'EM{model}_SN_{sn}_{clean_date_str}_{clean_freq_display}.png')
+        fig_name = apply_plot_filename_suffix(
+            f'RX_noise_binned_{param_token}_vs_RXnoise_{error_suffix}{bin_suffix}{source_suffix}_'
+            f'EM{model}_SN_{sn}_{clean_date_str}_{clean_freq_display}.png',
+            rxn)
         print('Saving', fig_name)
         fig.savefig(os.path.join(output_dir, fig_name), dpi=100)
     
