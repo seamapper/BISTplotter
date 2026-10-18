@@ -1605,6 +1605,8 @@ def parse_tx_z(fname, sis_version=int(4), cbox_model_num=[]):
             model_str = "EM"  # start of model number (within header str)
 
         i = 0
+        tx_tests = []  # each entry is one TX channels test: (tx, frequency, umag, phase)
+        last_slot_start = None  # first slot number of the block most recently stored
         while i < len(data):  # step through file and store channel data when found
             # ignore cases where TX Z header string was injected in BIST after the channel data and before phase data
             # if data[i].find('Phase') > -1:
@@ -1620,6 +1622,7 @@ def parse_tx_z(fname, sis_version=int(4), cbox_model_num=[]):
                 #     continue
 
                 temp_str = data[i]
+                block_first_slot = None
                 print('got temp_str =', temp_str)
 
                 if sis_version == 4:  # SIS 4: get rack and slot version from header
@@ -1627,7 +1630,9 @@ def parse_tx_z(fname, sis_version=int(4), cbox_model_num=[]):
                     rack_num = temp_str[temp_str.find(":") + 1:temp_str.find(":") + 4]
                     rack_num = int(rack_num.strip().rstrip())
                     slot_num = temp_str[temp_str.rfind(":") + 1:temp_str.rfind("\n")]
-                    slot_num = int(slot_num.strip().rstrip()) - 1  # subtract 1 for python indexing
+                    slot_num_raw = int(slot_num.strip().rstrip())
+                    block_first_slot = slot_num_raw
+                    slot_num = slot_num_raw - 1  # subtract 1 for python indexing
 
                 else:  # SIS 5: get slot numbers for SIS 5 (e.g., 36 rows = 36 channels, 10 columns = 10 slots/boards)
                     print('***SIS VERSION = 5')
@@ -1689,9 +1694,10 @@ def parse_tx_z(fname, sis_version=int(4), cbox_model_num=[]):
                         break
 
                     if sis_version == 5:
-                        slot_count = _sis5_slot_count_from_line(data[i])
-                        if slot_count is not None:
-                            slot_num = slot_count  # slot index header row only (not Frequency, etc.)
+                        slot_numbers = _sis5_slot_numbers(data[i])
+                        if slot_numbers is not None:
+                            slot_num = len(slot_numbers)  # slot index header row only (not Frequency, etc.)
+                            block_first_slot = slot_numbers[0]
                         rack_num = 9999  # placeholder for print statements for SIS 5, parsed for SIS 4
                     i += 1
 
@@ -1775,34 +1781,48 @@ def parse_tx_z(fname, sis_version=int(4), cbox_model_num=[]):
                 umag_temp = np.array(umag_temp).reshape(len(umag_temp), 1)
                 phase_temp = np.array(phase_temp).reshape(len(phase_temp), 1)
 
-                if found_channels is False:  # initiate storage (unknown number of channels until now)
+                # A slot index that restarts (1 after 11, for example) is the next TX test
+                # in this file. Later slot groups of the same test are concatenated.
+                new_test = (found_channels and block_first_slot is not None and last_slot_start is not None
+                            and block_first_slot <= last_slot_start)
+                if found_channels is False or new_test:
+                    if found_channels:
+                        tx_tests.append((ztx, ftx, utx, ptx))
                     ztx = z_temp
                     ftx = f_temp
                     utx = umag_temp
                     ptx = phase_temp
                     found_channels = True
-
-                else:  # concatenate new z_temp onto ztx array
+                else:  # concatenate the next slot group of the current test
                     ztx = np.concatenate((ztx, z_temp), axis=1)
                     ftx = np.concatenate((ftx, f_temp), axis=1)
                     utx = np.concatenate((utx, umag_temp), axis=1)
                     ptx = np.concatenate((ptx, phase_temp), axis=1)
-                    continue
+                if block_first_slot is not None:
+                    last_slot_start = block_first_slot
+                continue
 
             else:
                 i += 1  # increment to next line if TX Z not found
                 continue
 
         if found_channels is True:
-            # set up output dict for impedance data
+            tx_tests.append((ztx, ftx, utx, ptx))
+            # set up output dict for impedance data; extra tests stay in tx_tests
             z['filename'] = fname
-            z['tx'] = ztx
-            z['frequency'] = ftx
-            z['umag'] = utx
-            z['phase'] = ptx
+            z['tx'] = tx_tests[0][0]
+            z['frequency'] = tx_tests[0][1]
+            z['umag'] = tx_tests[0][2]
+            z['phase'] = tx_tests[0][3]
             z['tx_limits'] = zlim
+            z['tx_tests'] = [test[0] for test in tx_tests]
+            z['frequency_tests'] = [test[1] for test in tx_tests]
+            z['umag_tests'] = [test[2] for test in tx_tests]
+            z['phase_tests'] = [test[3] for test in tx_tests]
+            z['tx_test_index'] = 1
+            z['tx_test_count'] = len(tx_tests)
 
-            print('shape of ztx =', np.shape(ztx))
+            print('shape of ztx =', np.shape(z['tx']), 'tests =', len(tx_tests))
 
             return z
 
@@ -1839,16 +1859,23 @@ def _pair_limits(limits):
     return [float(vals[0]), float(vals[1])]
 
 
-def _sis5_slot_count_from_line(line):
-    """Return slot count from a SIS5 slot-index header row (e.g. '1 2 3 ... 10')."""
+def _sis5_slot_numbers(line):
+    """Slot indexes from a SIS5 header row (e.g. '1 2 3 ... 10'), or None."""
     tokens = line.split()
     if len(tokens) < 2:
         return None
     try:
-        [int(float(t)) for t in tokens]
+        return [int(float(t)) for t in tokens]
     except ValueError:
         return None
-    return len(tokens)
+
+
+def _sis5_slot_count_from_line(line):
+    """Return slot count from a SIS5 slot-index header row (e.g. '1 2 3 ... 10')."""
+    numbers = _sis5_slot_numbers(line)
+    if numbers is None:
+        return None
+    return len(numbers)
 
 
 def _tx_slot_axis_ticks(n_tx_slots, tick_step):
@@ -1907,7 +1934,8 @@ def write_tx_out_of_spec_report(z, output_dir=os.getcwd()):
                 # TX slots in plots are 1-based; channels are 0-based
                 bad_rows.append((int(tx_channel), int(tx_slot) + 1, float(z_val)))
 
-            report_name = 'TX_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_from_text_file_' + fname_str + '.txt'
+            report_name = ('TX_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_' + fname_str
+                           + tx_test_name_suffix(z, i) + '.txt')
             report_path = os.path.join(output_dir, report_name)
 
             with open(report_path, 'w', encoding='utf-8') as f:
@@ -1943,7 +1971,7 @@ def write_rx_array_out_of_spec_report(z, output_dir=os.getcwd()):
         try:
             fname_str = z['filename'][i]
             fname_str = fname_str[fname_str.rfind("/") + 1:-4]
-            report_name = 'RX_ARRAY_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_from_text_file_' + fname_str + '.txt'
+            report_name = 'RX_ARRAY_OOS_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_' + fname_str + '.txt'
             report_path = os.path.join(output_dir, report_name)
 
             sections = []
@@ -2127,7 +2155,6 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                     tx_extend = 'max'
                 im = ax2.imshow(ztx, cmap=tx_cmap, vmin=zmin, vmax=zmax)
                 ax2.set_aspect('equal')
-                plt.gca().invert_yaxis()  # invert y axis to match previous plots by Paul Johnson
 
                 # set axis ticks for each subplot directly (line plot and grid are handled slightly differently)
                 dx_tick = 5
@@ -2155,7 +2182,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 ax1.set_yticklabels([str(int(y)) for y in y_major_ticks], fontsize=axfsize)  # TX impedance
                 ax2.set_xticklabels(x_tick_labels, fontsize=axfsize)
                 ax2.set_yticklabels(y_slot_lbl, fontsize=axfsize)  # TX slot
-                ax2.set_ylim(n_tx_slots - 0.5, -0.5)  # keep slot axis aligned with heatmap after invert_yaxis
+                ax2.set_ylim(-0.5, n_tx_slots - 0.5)  # slot 1 at the bottom, counting upward
 
                 # line plot: grid at label interval; heatmap: per-cell minor grid
                 ax1.grid(which='major', color='k', linewidth=1)
@@ -2187,7 +2214,7 @@ def plot_tx_z(z, save_figs=True, plot_style=int(1), output_dir=os.getcwd(), retu
                 # fig = plt.gcf()
                 # fig.set_size_inches(10, 10)
                 fig_name = 'TX_Z_EM' + z['model'][i] + '_SN_' + z['sn'][i] + '_' + fname_str +\
-                           '_v' + str(plot_style) + '.png'
+                           tx_test_name_suffix(z, i) + '_v' + str(plot_style) + '.png'
                 # print('output_dir=', output_dir)
                 # print('fig_name=', fig_name)
                 # fig.savefig(fig_name, dpi=100)
@@ -3958,22 +3985,50 @@ def join_freq_date(z, freq_display, date_suffix):
     return ' - '.join(parts)
 
 
+def _tx_test_part(z, file_index):
+    """'Test N' when this entry is one of several TX tests from the same file."""
+    if z is None or file_index is None:
+        return ''
+    indexes = z.get('tx_test_index') or []
+    counts = z.get('tx_test_count') or []
+    if file_index < 0 or file_index >= len(counts) or file_index >= len(indexes):
+        return ''
+    try:
+        count = int(counts[file_index])
+        index = int(indexes[file_index])
+    except (TypeError, ValueError):
+        return ''
+    if count <= 1:
+        return ''
+    return f'Test {index}'
+
+
+def tx_test_name_suffix(z, file_index):
+    """'_test2' for a file that contains more than one TX test, else ''."""
+    part = _tx_test_part(z, file_index)
+    if not part:
+        return ''
+    return '_' + part.lower().replace(' ', '')
+
+
 def tx_channels_detail_line(detail, z, file_index=None, freq_text=None):
     """Third title line: [Freq: N kHz - ][date - ]filename.
 
     Frequency and date are omitted when they cannot be determined.
-    freq_text overrides the frequency read from the file. Include units in
-    freq_text when it is not a bare number (for example '200 kHz (High)').
+    freq_text is a frequency parsed from the BIST (RX channels). That value
+    stays in the title and is not controlled by System Information.
+    Include units in freq_text when it is not a bare number (for example
+    '200 kHz (High)').
     """
-    if _title_hidden(z, 'frequency'):
+    if freq_text is not None:
+        freq_part = _freq_title_part(freq_text)
+    elif _title_hidden(z, 'frequency'):
         freq_part = ''
     elif z.get('frequency_user_entered'):
         freq_part = frequency_title_text(z, '')
-    elif freq_text is None:
+    else:
         freq = tx_frequency_text(z, file_index=file_index)
         freq_part = f'Freq: {freq} kHz' if freq else ''
-    else:
-        freq_part = _freq_title_part(freq_text)
     file_name = tx_bist_filename(z, file_index)
     if file_index is not None:
         parts = []
@@ -3982,6 +4037,9 @@ def tx_channels_detail_line(detail, z, file_index=None, freq_text=None):
         date_text = tx_plot_date_text(z, file_index)
         if date_text:
             parts.append(date_text)
+        test_part = _tx_test_part(z, file_index)
+        if test_part:
+            parts.append(test_part)
         if file_name:
             parts.append(file_name)
         if parts:
@@ -4091,7 +4149,7 @@ def init_bist_dict(bist_test_type):
     bist = {k: [] for k in std_key_list}  # initialize dict with standard info
 
     if bist_test_type == 1:  # TX Channels
-        new_key_list = ['tx', 'umag', 'phase', 'tx_limits']
+        new_key_list = ['tx', 'umag', 'phase', 'tx_limits', 'tx_test_index', 'tx_test_count']
 
     elif bist_test_type == 2:  # RX Channels
         new_key_list = ['rx', 'rx_array', 'rx_temp',

@@ -595,7 +595,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.clr_file_btn = PushButton('Remove All Files', btnw, btnh, 'clr_file_btn', 'Remove all files')
         self.show_path_chk = CheckBox('Show file paths', False, 'show_paths_chk', 'Show paths in file list')
         self.export_plots_btn = PushButton('Export Plots', btnw, btnh, 'export_plots_btn',
-                                           'Save plot PNG files and out-of-spec reports from the last plot run')
+                                           'Save plot PNG files from the last plot run')
         self.export_plots_btn.setEnabled(False)
         self.import_analysis_btn = PushButton('Import Analysis', btnw, btnh, 'import_analysis_btn',
                                               'Load an analysis JSON file, restore its settings, and recreate the plots')
@@ -677,10 +677,15 @@ class MainWindow(QtWidgets.QMainWindow):
         
         plot_btn_layout = BoxLayout([self.plot_bist_btn, self.export_plots_btn], 'h', equal_width=True)
         analysis_btn_layout = BoxLayout([self.import_analysis_btn, self.export_analysis_btn], 'h', equal_width=True)
+        self.bad_channel_report_chk = CheckBox(
+            'Generate Bad Channel Report', False, 'bad_channel_report_chk',
+            'When exporting TX or RX Channels plots, also write the out-of-spec channel report')
+        self.bad_channel_report_chk.setVisible(False)
 
         # set the BIST options layout
         bist_options_layout = BoxLayout([bist_type_layout, noise_type_layout, cmap_layout,
-                                        select_clear_layout, plot_btn_layout, analysis_btn_layout], 'v')
+                                        select_clear_layout, plot_btn_layout, analysis_btn_layout,
+                                        self.bad_channel_report_chk], 'v')
 
         # set RX noise test parameters
         prm_unit_lbl = Label('Test units:', 110, 20, 'prm_unit_lbl', (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
@@ -1362,7 +1367,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.noise_test_type_cbox.setEnabled(True)
 
         self.prm_str_tb.setText(self.noise_params[self.prm_unit_cbox.currentText()])
-        
+        self.bad_channel_report_chk.setVisible(self.type_cbox.currentIndex() in (0, 1))
+
         # Automatically select BIST files that support the chosen plot type
         if self.file_list.count() > 0:  # Only if there are files loaded
             self.select_bist()
@@ -1870,9 +1876,10 @@ class MainWindow(QtWidgets.QMainWindow):
         bist = self.last_plotted_bist
         bist_test_type = self.last_bist_test_type
         if bist_test_type == self.bist_list[1]:  # TX Channels
-            tx_oos = read_bist.write_tx_out_of_spec_report(bist, output_dir=output_dir)
-            if tx_oos:
-                self.update_log(f'Wrote {len(tx_oos)} TX out-of-spec report(s)')
+            if self.bad_channel_report_chk.isChecked():
+                tx_oos = read_bist.write_tx_out_of_spec_report(bist, output_dir=output_dir)
+                if tx_oos:
+                    self.update_log(f'Wrote {len(tx_oos)} TX out-of-spec report(s)')
             history_only = self.last_channel_plot_style == 'History'
             if not history_only:
                 for ps in [1, 2]:
@@ -1881,9 +1888,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if f_hist:
                 self.update_log(f'Saved TX history plot {f_hist}')
         elif bist_test_type == self.bist_list[2]:  # RX Channels
-            rx_oos = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=output_dir)
-            if rx_oos:
-                self.update_log(f'Wrote {len(rx_oos)} RX array out-of-spec report(s)')
+            if self.bad_channel_report_chk.isChecked():
+                rx_oos = read_bist.write_rx_array_out_of_spec_report(bist, output_dir=output_dir)
+                if rx_oos:
+                    self.update_log(f'Wrote {len(rx_oos)} RX array out-of-spec report(s)')
             history_only = self.last_channel_plot_style == 'History'
             if not history_only:
                 read_bist.plot_rx_z(bist, save_figs=True, output_dir=output_dir)
@@ -3127,6 +3135,42 @@ class MainWindow(QtWidgets.QMainWindow):
             if widget.objectName() in self.missing_fields + self.conflicting_fields:
                 widget.setStyleSheet('color: red')
 
+    def _append_parsed_bist(self, bist, bist_temp):
+        """Append one parsed file. Split a file that contains several TX tests."""
+        if not isinstance(bist_temp, dict) or 'tx_tests' not in bist_temp:
+            read_bist.appendDict(bist, bist_temp)
+            return 1
+        tests = bist_temp.get('tx_tests') or []
+        freq_tests = bist_temp.get('frequency_tests') or []
+        umag_tests = bist_temp.get('umag_tests') or []
+        phase_tests = bist_temp.get('phase_tests') or []
+        records = []
+        if len(tests) <= 1:
+            one = dict(bist_temp)
+            for key in ('tx_tests', 'frequency_tests', 'umag_tests', 'phase_tests'):
+                one.pop(key, None)
+            one['tx_test_index'] = 1
+            one['tx_test_count'] = 1
+            records.append(one)
+        else:
+            for n, tx_arr in enumerate(tests):
+                one = dict(bist_temp)
+                for key in ('tx_tests', 'frequency_tests', 'umag_tests', 'phase_tests'):
+                    one.pop(key, None)
+                one['tx'] = tx_arr
+                if n < len(freq_tests):
+                    one['frequency'] = freq_tests[n]
+                if n < len(umag_tests):
+                    one['umag'] = umag_tests[n]
+                if n < len(phase_tests):
+                    one['phase'] = phase_tests[n]
+                one['tx_test_index'] = n + 1
+                one['tx_test_count'] = len(tests)
+                records.append(one)
+        for one in records:
+            read_bist.appendDict(bist, one)
+        return len(records)
+
     def plot_bist(self):
         # get list of selected files and send each to the appropriate plotter
         bist_test_type = self.type_cbox.currentText()
@@ -3614,10 +3658,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     bist_temp['ship_name'] = self._optional_sysinfo_text(self.ship_tb)
                     bist_temp['cruise_name'] = self._optional_sysinfo_text(self.cruise_tb)
 
-                    # append dicts
+                    # append dicts; a file with several TX tests becomes one record per test
                     print('starting to append bist_temp dict')
-                    bist = read_bist.appendDict(bist, bist_temp)
-                    bist_count += 1  # increment counter if no issues parsing or appending
+                    n_added = self._append_parsed_bist(bist, bist_temp)
+                    bist_count += n_added
+                    if n_added > 1:
+                        self.update_log(fname_str + ' has ' + str(n_added) +
+                                        ' TX channel tests; plotting each separately')
                     print('done appending bist_temp dict; total bist_count is now ', bist_count)
 
                 except ValueError:
@@ -3681,7 +3728,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
                                     # Create a descriptive name for this plot
                                     fname_str = bist['filename'][i][bist['filename'][i].rfind("/") + 1:-4]
-                                    plot_name = f"TX Channels - {fname_str} (Style {ps})"
+                                    test_part = read_bist._tx_test_part(bist, i)
+                                    if test_part:
+                                        test_part = ' ' + test_part
+                                    plot_name = f"TX Channels - {fname_str}{test_part} (Style {ps})"
                                     self.freq_list.append(plot_name)
 
                             except Exception as e:
@@ -5209,7 +5259,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     tx_extend = 'max'
                 im = ax2.imshow(ztx, cmap=tx_cmap, vmin=zmin, vmax=zmax)
                 ax2.set_aspect('equal', anchor='N')
-                plt.gca().invert_yaxis()
 
                 # Set axis ticks for each subplot
                 dx_tick = 5
@@ -5236,7 +5285,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ax1.set_yticklabels([str(int(y)) for y in y_major_ticks], fontsize=axfsize)
                 ax2.set_xticklabels(x_tick_labels, fontsize=axfsize)
                 ax2.set_yticklabels(y_slot_lbl, fontsize=axfsize)
-                ax2.set_ylim(n_tx_slots - 0.5, -0.5)
+                ax2.set_ylim(-0.5, n_tx_slots - 0.5)
 
                 # line plot: grid at label interval; heatmap: per-cell minor grid
                 ax1.grid(which='major', color='k', linewidth=1)
